@@ -1,0 +1,15 @@
+- name: "TrafficSpike"
+  query_tpl: "sum(hotrod_requests_total{error=\"false\"})"
+  operator: ">"
+  threshold: 120
+  weight: 1
+- name: "MemorySpike"
+  query_tpl: "go_memstats_alloc_bytes_total"
+  operator: ">"
+  threshold: 1000000
+  weight: 1
+- name: "ServiceTraffic"
+  query_tpl: "sum(hotrod_requests_total{error=\"false\",service=\"{{.Service}}\"})"
+  operator: ">"
+  threshold: 50
+  weight: 1

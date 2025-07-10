@@ -10,12 +10,13 @@ import (
 
 // Alert represents a simplified version of a Prometheus alert
 type Alert struct {
-	Name      string
-	Instance  string
-	Severity  string
-	State     string
-	StartsAt  time.Time
+	Name     string
+	Instance string
+	Severity string
+	Service  string 
+	StartsAt time.Time
 }
+
 
 // FetchAlerts fetches firing alerts from Prometheus
 func FetchAlerts(promURL string) ([]Alert, error) {
@@ -34,6 +35,7 @@ func FetchAlerts(promURL string) ([]Alert, error) {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
+	// Define a minimal struct matching Prometheus response structure
 	var raw struct {
 		Data struct {
 			Alerts []struct {
@@ -41,6 +43,7 @@ func FetchAlerts(promURL string) ([]Alert, error) {
 					AlertName string `json:"alertname"`
 					Instance  string `json:"instance"`
 					Severity  string `json:"severity"`
+					Service   string `json:"service"` 
 				} `json:"labels"`
 				State    string    `json:"state"`
 				StartsAt time.Time `json:"activeAt"`
@@ -59,7 +62,7 @@ func FetchAlerts(promURL string) ([]Alert, error) {
 				Name:     a.Labels.AlertName,
 				Instance: a.Labels.Instance,
 				Severity: a.Labels.Severity,
-				State:    a.State,
+				Service:  a.Labels.Service,
 				StartsAt: a.StartsAt,
 			})
 		}

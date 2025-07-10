@@ -35,7 +35,7 @@ func (rt *RiskTracker) UpdateFromAlerts(alerts []prometheus.Alert) {
 			item.TTL = rt.TTL
 		} else {
 			rt.Items[key] = &RiskItem{
-				Service:   a.Instance,
+				Service:   a.Service,
 				AlertName: a.Name,
 				Severity:  a.Severity,
 				FirstSeen: now,

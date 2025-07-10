@@ -55,7 +55,7 @@ func main() {
 			}
 
 			// 🪵 LOGS
-			symptoms, err := logs.ScanLogsAndMatchSymptoms(profile.LogFile, 500)
+			symptoms, err := logs.ScanLogsAndMatchSymptoms(profile.LogFile, 500, profile.LogPatterns)
 			if err == nil {
 				for _, sym := range symptoms {
 					if sym.Service == item.Service {

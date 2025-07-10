@@ -9,10 +9,17 @@ import (
 	"vigilant/pkg/prometheus"
 )
 
-type ServiceProfile struct {
-	LogFile string                   `yaml:"log_file"`
-	Metrics []prometheus.MetricCheck `yaml:"metrics"`
+type LogPattern struct {
+	Label string `yaml:"label"`
+	Regex string `yaml:"regex"`
 }
+
+type ServiceProfile struct {
+	LogFile     string                   `yaml:"log_file"`
+	LogPatterns []LogPattern             `yaml:"log_patterns"`
+	Metrics     []prometheus.MetricCheck `yaml:"metrics"`
+}
+
 
 // loads all service profile files from a directory.
 func LoadServiceProfiles(dir string) (map[string]ServiceProfile, error) {

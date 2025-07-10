@@ -7,6 +7,9 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"vigilant/pkg/config"
+
 )
 
 // SymptomMatch represents a detected issue from logs
@@ -23,19 +26,9 @@ type PatternDef struct {
 	Regex *regexp.Regexp
 }
 
-// DefaultPatterns
-var DefaultPatterns = []PatternDef{
-	{"timeout", regexp.MustCompile(`(?i)timeout`)},
-	{"panic", regexp.MustCompile(`(?i)panic`)},
-	{"5xx", regexp.MustCompile(`(?i)5\d\d`)},
-	{"unavailable", regexp.MustCompile(`(?i)unavailable`)},
-	{"connection_refused", regexp.MustCompile(`(?i)connection refused`)}, 
-	{"trace_export_fail", regexp.MustCompile(`(?i)traces export.*connect`)}, 
-}
-
 
 // ScanLogsAndMatchSymptoms scans a file for lines that match known patterns
-func ScanLogsAndMatchSymptoms(logFilePath string, limit int) ([]SymptomMatch, error) {
+func ScanLogsAndMatchSymptoms(logFilePath string, limit int, patterns []config.LogPattern) ([]SymptomMatch, error) {
 	file, err := os.Open(logFilePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open log file: %w", err)
@@ -44,8 +37,19 @@ func ScanLogsAndMatchSymptoms(logFilePath string, limit int) ([]SymptomMatch, er
 
 	matches := map[string]*SymptomMatch{}
 	scanner := bufio.NewScanner(file)
-
 	linesScanned := 0
+
+	compiled := []PatternDef{}
+	for _, p := range patterns {
+		re, err := regexp.Compile(p.Regex)
+		if err != nil {
+			continue
+		}
+		compiled = append(compiled, PatternDef{
+			Label: p.Label,
+			Regex: re,
+		})
+	}
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -56,7 +60,7 @@ func ScanLogsAndMatchSymptoms(logFilePath string, limit int) ([]SymptomMatch, er
 
 		service := extractService(line)
 
-		for _, p := range DefaultPatterns {
+		for _, p := range compiled {
 			if p.Regex.MatchString(line) {
 				key := service + "::" + p.Label
 				if _, exists := matches[key]; !exists {
@@ -81,6 +85,7 @@ func ScanLogsAndMatchSymptoms(logFilePath string, limit int) ([]SymptomMatch, er
 
 	return result, nil
 }
+
 
 func extractService(line string) string {
 	if parts := strings.SplitN(line, "|", 2); len(parts) == 2 {

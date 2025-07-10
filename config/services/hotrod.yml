@@ -1,4 +1,19 @@
 log_file: /home/priyanjith/copilot-stack/hotrod.log
+
+log_patterns:
+  - label: timeout
+    regex: "(?i)timeout"
+  - label: panic
+    regex: "(?i)panic"
+  - label: 5xx
+    regex: "(?i)5\\d\\d"
+  - label: unavailable
+    regex: "(?i)unavailable"
+  - label: connection_refused
+    regex: "(?i)connection refused"
+  - label: trace_export_fail
+    regex: "(?i)traces export.*connect"
+
 metrics:
   - name: HotrodTraffic
     query_tpl: sum(hotrod_http_requests_total)

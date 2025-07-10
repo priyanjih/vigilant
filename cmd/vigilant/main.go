@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"time"
+	"os"
 
 	"vigilant/pkg/prometheus"
 	"vigilant/pkg/risk"
@@ -25,6 +26,47 @@ func main() {
 			fmt.Println("Error fetching alerts:", err)
 			continue
 		}
+		
+path := os.Getenv("VIGILANT_METRICS_CONFIG")
+if path == "" {
+	path = "../../config/metrics.yml"
+}
+metricChecks, err := prometheus.LoadMetricChecksFromFile(path)
+
+// Prevent duplicates
+seen := map[string]bool{}
+
+for _, item := range tracker.Items {
+	service := item.Service
+	if seen[service] {
+		continue
+	}
+	seen[service] = true
+
+	var serviceChecks []prometheus.MetricCheck
+	for _, check := range metricChecks {
+		cloned := check // avoid mutating the global one
+		cloned.QueryTpl = prometheus.RenderQuery(cloned.QueryTpl, map[string]string{
+			"Service": service,
+		})
+		serviceChecks = append(serviceChecks, cloned)
+	}
+
+	results, err := prometheus.EvaluateMetricChecks(promURL, []prometheus.ServiceMetricConfig{
+		{
+			Service: service,
+			Checks:  serviceChecks,
+		},
+	})
+	if err == nil {
+		fmt.Println("=== Metric Triggers ===")
+		for _, r := range results {
+			fmt.Printf("[METRIC] %s triggered for %s: %.2f %s %.2f\n",
+				r.Check.Name, r.Service, r.Value, r.Check.Operator, r.Check.Threshold)
+		}
+	}
+}
+		
 
 		// Update Risk Tracker
 		tracker.UpdateFromAlerts(alerts)
@@ -52,3 +94,4 @@ func main() {
 		time.Sleep(15 * time.Second)
 	}
 }
+

@@ -1,0 +1,7 @@
+log_file: /var/log/syslog
+metrics:
+  - name: RAMUsage
+    query_tpl: node_memory_Active_bytes
+    operator: ">"
+    threshold: 4.5e+9
+    weight: 2

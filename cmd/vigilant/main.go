@@ -11,12 +11,17 @@ import (
 	"vigilant/pkg/summarizer"
 )
 
-const promURL = "http://localhost:9090"
 
 func main() {
 	fmt.Println("Starting Vigilant...")
 	if err := godotenv.Load("../../.env"); err != nil {
 		fmt.Println("Warning: .env file not found or failed to load.")
+	}
+
+	promURL := os.Getenv("PROM_URL")
+	if promURL == "" {
+		promURL = "http://localhost:9090" // fallback default
+		fmt.Println("PROM_URL not set in env, using default:", promURL)
 	}
 
 	tracker := risk.NewRiskTracker(2 * time.Minute)

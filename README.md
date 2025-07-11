@@ -75,9 +75,9 @@ log_patterns:
 
 ```bash
 # .env
-PROMETHEUS_URL=http://localhost:9090
+PROM_URL=http://localhost:9090
 OPENAI_API_KEY=your_openai_key_here  # Optional, for LLM summaries
-LOG_LEVEL=info
+
 ```
 
 3. **Start monitoring**:

@@ -152,37 +152,7 @@ log_patterns:
     regex: '(?i)timeout|timed out'
 ```
 
-### Environment Variables
-
-```bash
-# Core settings
-PROMETHEUS_URL=http://localhost:9090
-
-# LLM Integration (optional)
-OPENAI_API_KEY=your_key_here
-OPENAI_MODEL=gpt-4
-ANTHROPIC_API_KEY=your_key_here  # Alternative to OpenAI
-
-
 ## 🛠️ Development
-
-### Project Structure
-
-```
-vigilant/
-├── cmd/
-│   └── server/          # HTTP server entrypoint
-├── pkg/
-│   ├── config/          # Configuration management
-│   ├── prometheus/      # Prometheus client
-│   ├── logs/           # Log analysis
-│   ├── risk/           # Risk tracking & correlation
-│   └── summarizer/     # LLM integration
-├── config/
-│   └── services/       # Service configurations
-├── dashboard/          # React frontend (WIP)
-└── examples/           # Example configurations
-
 
 Still in very basic stage. 
 

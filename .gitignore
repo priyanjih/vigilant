@@ -3,6 +3,7 @@ bin/
 *.exe
 *.out
 *.test
+.env
 
 # IDE
 .vscode/

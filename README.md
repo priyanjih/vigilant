@@ -1,97 +1,188 @@
-# 🛡️ Vigilant
+# 🔍 Vigilant
 
-**Vigilant** is a local observability early-warning system that combines Prometheus alerts, log pattern matching, and basic metric thresholding. It detects issues *before* your services catch fire.
+> **Intelligent observability for the modern engineer**
 
-Built for resource-constrained environments, burnout-prone teams, and engineers tired of being paged *after* things break.
+**Vigilant** is a lightweight, AI-powered observability system that correlates alerts, logs, and metrics to detect anomalies and explain root causes automatically. Built for developers who want smart monitoring without the complexity of enterprise solutions.
 
----
+## ✨ Features
 
-## 🚀 What It Does (So Far)
+🚨 **Smart Alert Correlation** - Automatically connects related alerts across services  
+📊 **Multi-Source Analysis** - Prometheus metrics + log pattern matching + custom checks  
+🤖 **AI-Powered Root Cause** - LLM integration for intelligent incident summaries  
+⚡ **Real-time Risk Tracking** - Service health scoring with automatic cleanup  
+🎯 **Zero-Config Start** - Works out of the box with minimal setup  
+🔌 **Pluggable Architecture** - Extensible for custom data sources and LLM backends  
 
-- Connects to **Prometheus** and fetches active alerts
-- Tracks active risk services/nodes with a TTL
-- Matches known failure **log patterns** (per service)
-- Runs **metric threshold checks** using PromQL
-- Outputs clean CLI summaries
+## 🎯 Perfect For
 
----
+- **Personal Projects** - Monitor your side projects intelligently
+- **Home Labs** - Keep your infrastructure healthy
+- **Prototyping** - Build smart monitoring proof-of-concepts
+- **Learning** - Explore observability and AI integration
+- **Internal Tools** - Lightweight monitoring for small teams
 
-## 🔧 What's Coming
+## 🚀 Quick Start
 
-- ✨ LLM-powered root cause summarizer (local, lightweight models)
-- ✨ Rule-based prediction engine (fallout prediction, confidence scoring)
-- ✨ JSON & Grafana export support
-- ✨ Live dashboard view
+### Prerequisites
 
----
+- Go 1.20+
+- Prometheus instance (local or remote)
+- Linux/macOS system
 
-## ⚙️ Getting Started
-
-You need:
-- Go 1.21+
-- Prometheus running at `localhost:9090`
-
-Clone this repo and run:
+### Installation
 
 ```bash
-go run ./cmd/vigilant
+# Clone the repository
+git clone https://github.com/priyanjih/vigilant.git
+cd vigilant
+
+# Copy environment template
+cp .env.example .env
+
+# Install dependencies
+go mod download
+
+# Run Vigilant
+go run main.go
 ```
 
-By default, it will:
-- Load alert data from Prometheus
-- Track any services flagged by alerts
-- Load per-service configs from `config/services.yml`
-- Use that to get log file + PromQL metric checks
+### Basic Configuration
 
----
-
-## 🔍 Example Service Config (`config/services.yml`)
+1. **Configure your services** in `config/services/`:
 
 ```yaml
-services:
-  hotrod:
-    log_file: /home/user/copilot-stack/hotrod.log
-    metrics:
-      - name: HotrodTraffic
-        query_tpl: sum(hotrod_http_requests_total)
-        operator: ">"
-        threshold: 100
-        weight: 1
-    log_patterns:
-      - label: trace_export_fail
-        regex: "traces export.*connect"
-      - label: timeout
-        regex: "timeout"
-
-  node:
-    log_file: /var/log/syslog
-    metrics:
-      - name: RAMUsage
-        query_tpl: node_memory_Active_bytes
-        operator: ">"
-        threshold: 4.5e+9
-        weight: 2
-    log_patterns:
-      - label: cpu_hog
-        regex: "hogged CPU for >[0-9]+us"
+# config/services/web-api.yml
+log_file: /var/log/web-api.log
+metrics:
+  - name: ErrorRate
+    query_tpl: 'rate(http_requests_total{job="{{.Service}}",code=~"5.."}[5m])'
+    operator: ">"
+    threshold: 0.05
+    weight: 2
+  - name: ResponseTime
+    query_tpl: 'histogram_quantile(0.95, http_request_duration_seconds_bucket{job="{{.Service}}"})'
+    operator: ">"
+    threshold: 0.5
+    weight: 1
+log_patterns:
+  - label: database_error
+    regex: '(?i)(database|sql|connection).*(error|failed|timeout)'
+  - label: memory_issue
+    regex: '(?i)(out of memory|oom|memory leak)'
 ```
 
----
+2. **Set up environment variables**:
 
-## ✅ Status Summary
+```bash
+# .env
+PROMETHEUS_URL=http://localhost:9090
+OPENAI_API_KEY=your_openai_key_here  # Optional, for LLM summaries
+LOG_LEVEL=info
+```
 
-| Feature                    | Status     |
-|----------------------------|------------|
-| Prometheus Alert Fetcher  | ✅ Done     |
-| TTL Risk Tracker          | ✅ Done     |
-| Log Pattern Scanner       | ✅ Done     |
-| Metrics Check Engine      | ✅ Done     |
-| Config-Driven Profiles    | ✅ Done     |
-| LLM Integration           | ⏳ Planned  |
-| Fallout Prediction Engine | ⏳ Planned  |
-| Export Options            | ⏳ Planned  |
+3. **Start monitoring**:
 
----
+```bash
+go run main.go
+```
+
+## 📊 Example Output
+
+```
+Starting Vigilant...
+Fetching alerts...
+[ALERT] High CPU usage detected on web-api (severity: warning)
+[SYMPTOM] database_error matched on web-api (15 times)
+[METRIC] ErrorRate triggered for web-api: 0.12 > 0.05
+
+=== Root Cause Summary ===
+🔍 Analysis: The web-api service is experiencing elevated error rates (12% vs 5% threshold) 
+combined with 15 database connection errors in the logs. This suggests a database connectivity 
+issue causing cascading failures.
+
+💡 Recommendation: Check database connection pool settings and network connectivity between 
+web-api and database services.
+```
+
+## 🏗️ Architecture
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Prometheus    │    │   Log Files     │    │  Custom Checks  │
+│     Alerts      │    │   Scanning      │    │   & Metrics     │
+└─────────┬───────┘    └─────────┬───────┘    └─────────┬───────┘
+          │                      │                      │
+          └──────────────────────┼──────────────────────┘
+                                 │
+                    ┌─────────────▼─────────────┐
+                    │      Risk Tracker        │
+                    │   (Correlation Engine)   │
+                    └─────────────┬─────────────┘
+                                 │
+                    ┌─────────────▼─────────────┐
+                    │     LLM Summarizer       │
+                    │   (Root Cause Analysis)  │
+                    └─────────────┬─────────────┘
+                                 │
+                    ┌─────────────▼─────────────┐
+                    │      API Server          │
+                    │   (Dashboard & Webhooks) │
+                    └───────────────────────────┘
+```
+
+## 🔧 Configuration
+
+### Service Profiles
+
+Each service gets its own YAML configuration file:
+
+```yaml
+# config/services/my-service.yml
+log_file: "/path/to/service.log"
+metrics:
+  - name: "CPUUsage"
+    query_tpl: 'cpu_usage{service="{{.Service}}"}'
+    operator: ">"
+    threshold: 80
+    weight: 1
+log_patterns:
+  - label: "error"
+    regex: '(?i)error|exception|failed'
+  - label: "timeout"
+    regex: '(?i)timeout|timed out'
+```
+
+### Environment Variables
+
+```bash
+# Core settings
+PROMETHEUS_URL=http://localhost:9090
+
+# LLM Integration (optional)
+OPENAI_API_KEY=your_key_here
+OPENAI_MODEL=gpt-4
+ANTHROPIC_API_KEY=your_key_here  # Alternative to OpenAI
 
 
+## 🛠️ Development
+
+### Project Structure
+
+```
+vigilant/
+├── cmd/
+│   └── server/          # HTTP server entrypoint
+├── pkg/
+│   ├── config/          # Configuration management
+│   ├── prometheus/      # Prometheus client
+│   ├── logs/           # Log analysis
+│   ├── risk/           # Risk tracking & correlation
+│   └── summarizer/     # LLM integration
+├── config/
+│   └── services/       # Service configurations
+├── dashboard/          # React frontend (WIP)
+└── examples/           # Example configurations
+
+
+Still in very basic stage. 
 

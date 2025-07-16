@@ -9,4 +9,6 @@ type RiskItem struct {
 	FirstSeen  time.Time
 	LastSeen   time.Time
 	TTL        time.Duration
+	Score   int
+	Summary string
 }

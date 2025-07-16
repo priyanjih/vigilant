@@ -2,15 +2,19 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"time"
+
 	"github.com/joho/godotenv"
+
+	"vigilant/pkg/api"
 	"vigilant/pkg/config"
 	"vigilant/pkg/logs"
 	"vigilant/pkg/prometheus"
 	"vigilant/pkg/risk"
 	"vigilant/pkg/summarizer"
+	"vigilant/pkg/utils"
 )
-
 
 func main() {
 	fmt.Println("Starting Vigilant...")
@@ -20,25 +24,26 @@ func main() {
 
 	promURL := os.Getenv("PROM_URL")
 	if promURL == "" {
-		promURL = "http://localhost:9090" // fallback default
+		promURL = "http://localhost:9090"
 		fmt.Println("PROM_URL not set in env, using default:", promURL)
 	}
 
+	// Start REST API server
+	go api.StartServer()
+
 	tracker := risk.NewRiskTracker(2 * time.Minute)
 
-	// Load service profiles
 	profiles, err := config.LoadServiceProfiles("../../config/services")
 	if err != nil {
 		fmt.Println("Failed to load service configs:", err)
 		return
 	}
 
-	// Simple change tracking
 	var (
-		lastAlertCount    int
-		lastSymptomCount  int
-		lastMetricCount   int
-		needsLLMUpdate    bool
+		lastAlertCount   int
+		lastSymptomCount int
+		lastMetricCount  int
+		needsLLMUpdate   bool
 	)
 
 	for {
@@ -54,7 +59,8 @@ func main() {
 
 		seen := map[string]bool{}
 		var correlations []summarizer.AlertCorrelation
-		
+		var uiData []api.APIRiskItem
+
 		currentAlertCount := len(tracker.Items)
 		currentSymptomCount := 0
 		currentMetricCount := 0
@@ -113,35 +119,44 @@ func main() {
 				Symptoms: symptoms,
 				Metrics:  metrics,
 			})
+
+			uiData = append(uiData, api.APIRiskItem{
+				Service:  service,
+				Alert:    item.AlertName,
+				Severity: item.Severity,
+				Symptoms: utils.ExtractPatterns(symptoms),
+				Metrics:  utils.ExtractMetricNames(metrics),
+				Summary:  "", // will be updated after LLM
+			})
+			
 		}
 
 		// Check if anything changed
-		if currentAlertCount != lastAlertCount || 
-		   currentSymptomCount != lastSymptomCount || 
-		   currentMetricCount != lastMetricCount {
+		if currentAlertCount != lastAlertCount ||
+			currentSymptomCount != lastSymptomCount ||
+			currentMetricCount != lastMetricCount {
 			needsLLMUpdate = true
-			
-			fmt.Printf("Changes detected - Alerts: %d->%d, Symptoms: %d->%d, Metrics: %d->%d\n",
+			fmt.Printf("Changes detected - Alerts: %d→%d, Symptoms: %d→%d, Metrics: %d→%d\n",
 				lastAlertCount, currentAlertCount,
 				lastSymptomCount, currentSymptomCount,
 				lastMetricCount, currentMetricCount)
 		}
 
-		// Hit LLM only if there are changes
 		if needsLLMUpdate {
 			currentInput := summarizer.SummaryInput{
 				Correlations: correlations,
 			}
-			
 			summary, err := summarizer.Summarize(currentInput)
 			if err != nil {
 				fmt.Println("Error generating summary:", err)
 			} else {
 				fmt.Println("=== Root Cause Summary ===")
 				fmt.Println(summary)
+				for i := range uiData {
+					uiData[i].Summary = summary
+				}
 			}
-			
-			// Update last known state
+
 			lastAlertCount = currentAlertCount
 			lastSymptomCount = currentSymptomCount
 			lastMetricCount = currentMetricCount
@@ -149,7 +164,10 @@ func main() {
 		} else {
 			fmt.Println("No changes detected. Skipping LLM summary.")
 		}
-		
+
+		// Push to REST API memory
+		api.UpdateRisks(uiData)
+
 		time.Sleep(30 * time.Second)
 	}
 }

@@ -1,3 +1,5 @@
+⚠️ Work-in-progress: Vigilant is an early prototype and under active development. Expect bugs, half-built features, and chaos.
+
 # 🔍 Vigilant
 
 > **Intelligent observability for the modern engineer**

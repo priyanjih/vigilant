@@ -7,16 +7,28 @@ import (
 	"sync"
 )
 
-type APIRiskItem struct {
-	Service   string   `json:"service"`
-	Alert     string   `json:"alert"`
-	Severity  string   `json:"severity"`
-	Score     int      `json:"score"`
-	Symptoms  []string `json:"symptoms"`
-	Metrics   []string `json:"metrics"`
-	Summary   string   `json:"summary"`
-}
-
+type APIMetric struct {
+	Name      string  `json:"name"`
+	Value     float64 `json:"value"`
+	Operator  string  `json:"operator"`
+	Threshold float64 `json:"threshold"`
+  }
+  
+  type APISymptom struct {
+	Pattern string `json:"pattern"`
+	Count   int    `json:"count"`
+  }
+  
+  type APIRiskItem struct {
+	Service   string       `json:"service"`
+	Alert     string       `json:"alert"`
+	Severity  string       `json:"severity"`
+	Score     int          `json:"score"`
+	Symptoms  []APISymptom `json:"symptoms"`
+	Metrics   []APIMetric  `json:"metrics"`
+	Summary   string       `json:"summary"`
+  }
+  
 var (
 	currentAPIRisks []APIRiskItem
 	riskMu          sync.RWMutex

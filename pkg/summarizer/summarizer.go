@@ -104,3 +104,26 @@ func buildPrompt(input SummaryInput) string {
 func formatOutput(result RootCauseSummary) string {
 	return fmt.Sprintf("RISK: %s\nSUMMARY: %s", result.Risk, result.Summary)
 }
+
+func SummarizeMany(correlations []AlertCorrelation) (map[string]string, error) {
+	results := make(map[string]string)
+
+	// Group all correlations by service
+	grouped := make(map[string][]AlertCorrelation)
+	for _, c := range correlations {
+		grouped[c.Alert.Service] = append(grouped[c.Alert.Service], c)
+	}
+
+	// Summarize each group individually
+	for service, group := range grouped {
+		input := SummaryInput{Correlations: group}
+		summary, err := Summarize(input)
+		if err != nil {
+			results[service] = "RISK: Unknown\nSUMMARY: LLM error or insufficient data"
+			continue
+		}
+		results[service] = summary
+	}
+
+	return results, nil
+}

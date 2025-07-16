@@ -97,7 +97,7 @@ export default function App() {
 
             <div className="mb-4">
               <h3 className="font-semibold text-zinc-300">🧠 Summary</h3>
-              <pre className="bg-zinc-800 p-3 rounded">{selected.summary}</pre>
+              <pre className="bg-zinc-800 p-3 rounded whitespace-pre-wrap break-words">{selected.summary}</pre>
             </div>
           </>
         ) : (

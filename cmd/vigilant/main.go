@@ -211,19 +211,23 @@ func main() {
 		}
 
 		if needsLLMUpdate {
-			currentInput := summarizer.SummaryInput{
-				Correlations: correlations,
-			}
-			summary, err := summarizer.Summarize(currentInput)
+			summaryMap, err := summarizer.SummarizeMany(correlations)
 			if err != nil {
-				fmt.Println("Error generating summary:", err)
+				fmt.Println("Error generating per-service summaries:", err)
 			} else {
-				fmt.Println("=== Root Cause Summary ===")
-				fmt.Println(summary)
-				for i := range uiData {
-					uiData[i].Summary = summary
+				fmt.Println("=== Root Cause Summaries ===")
+				for svc, summary := range summaryMap {
+					fmt.Printf("[%s]\n%s\n\n", svc, summary)
 				}
+				for i := range uiData {
+					if summary, ok := summaryMap[uiData[i].Service]; ok {
+						uiData[i].Summary = summary
+					}
+				}
+				currentState.LastLLMUpdate = time.Now()
+				lastState = currentState
 			}
+			
 
 			// Update the timestamp
 			currentState.LastLLMUpdate = time.Now()

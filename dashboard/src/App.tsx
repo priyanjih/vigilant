@@ -20,6 +20,7 @@ interface APIRiskItem {
   symptoms: APISymptom[];
   metrics: APIMetric[];
   summary: string;
+  risk: string;
 }
 
 
@@ -52,11 +53,23 @@ export default function App() {
               selected?.service === item.service ? "bg-zinc-700" : ""
             }`}
           >
-            <div className="flex justify-between items-center">
-              <span>{item.service}</span>
-              <span className="text-red-400 font-bold">{item.score}</span>
-            </div>
-            <div className="text-zinc-400 text-xs">{item.alert}</div>
+          <div className="flex items-center gap-2">
+            <span className="text-red-400 font-bold">{item.score}</span>
+            <span
+              className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                item.risk === "High"
+                  ? "bg-red-600"
+                  : item.risk === "Medium"
+                  ? "bg-yellow-600"
+                  : item.risk === "Low"
+                  ? "bg-green-600"
+                  : "bg-gray-600"
+              }`}
+            >
+              {item.risk}
+            </span>
+          </div>
+          <div className="text-zinc-400 text-xs">{item.alert}</div>
           </div>
         ))}
       </div>
@@ -65,7 +78,7 @@ export default function App() {
         {selected ? (
           <>
             <h2 className="text-xl font-semibold mb-4">
-              {selected.service} — Score: {selected.score}
+            {selected.service} — Score: {selected.score} — Risk: {selected.risk}
             </h2>
 
             <div className="mb-4">
@@ -73,8 +86,7 @@ export default function App() {
               <p>{selected.alert} ({selected.severity})</p>
             </div>
 
-            <div className="mb-4">
-              <h3 className="font-semibold text-zinc-300">🪵 Symptoms</h3>
+            {selected.symptoms?.length > 0 ? (
               <ul className="list-disc ml-6">
                 {selected.symptoms.map((s, i) => (
                   <li key={i}>
@@ -82,17 +94,22 @@ export default function App() {
                   </li>
                 ))}
               </ul>
-            </div>
-
+            ) : (
+              <p className="text-zinc-400 italic">No symptoms available</p>
+            )}
             <div className="mb-4">
               <h3 className="font-semibold text-zinc-300">📊 Metrics</h3>
-              <ul className="list-disc ml-6">
-                {selected.metrics.map((m, i) => (
-                  <li key={i}>
-                    {m.name}: {m.value.toFixed(2)} {m.operator} {m.threshold}
-                  </li>
-                ))}
-              </ul>
+              {selected.metrics && selected.metrics.length > 0 ? (
+                <ul className="list-disc ml-6">
+                  {selected.metrics.map((m, i) => (
+                    <li key={i}>
+                      {m.name}: {m.value.toFixed(2)} {m.operator} {m.threshold}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-zinc-400 italic">No metrics available</p>
+              )}
             </div>
 
             <div className="mb-4">

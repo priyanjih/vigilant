@@ -18,5 +18,5 @@ metrics:
   - name: HotrodTraffic
     query_tpl: sum(hotrod_http_requests_total)
     operator: ">"
-    threshold: 50
+    threshold: 30
     weight: 1

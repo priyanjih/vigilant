@@ -11,4 +11,5 @@ type RiskItem struct {
 	TTL        time.Duration
 	Score   int
 	Summary string
+	Risk	  string
 }

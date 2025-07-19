@@ -220,18 +220,18 @@ func main() {
 					fmt.Printf("[%s]\n%s\n\n", svc, summary)
 				}
 				for i := range uiData {
-					if summary, ok := summaryMap[uiData[i].Service]; ok {
-						uiData[i].Summary = summary
-					}
+					if s, ok := summaryMap[uiData[i].Service]; ok {
+						uiData[i].Summary = s.Summary
+						uiData[i].Risk = s.Risk
 				}
 				currentState.LastLLMUpdate = time.Now()
 				lastState = currentState
 			}
 			
-
 			// Update the timestamp
 			currentState.LastLLMUpdate = time.Now()
 			lastState = currentState
+		}
 		} else {
 			fmt.Println("No changes detected. Skipping LLM summary.")
 		}

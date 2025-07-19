@@ -29,10 +29,10 @@ type RootCauseSummary struct {
 	Summary string `json:"summary"`
 }
 
-func Summarize(input SummaryInput) (string, error) {
+func Summarize(input SummaryInput) (RootCauseSummary, error) {
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
-		return "", fmt.Errorf("OPENAI_API_KEY not set")
+		return RootCauseSummary{}, fmt.Errorf("OPENAI_API_KEY not set")
 	}
 
 	client := openai.NewClient(apiKey)
@@ -58,26 +58,30 @@ func Summarize(input SummaryInput) (string, error) {
 		},
 	})
 	if err != nil {
-		return "", err
+		return RootCauseSummary{}, err
 	}
 
 	raw := resp.Choices[0].Message.Content
 	var result RootCauseSummary
 	if err := json.Unmarshal([]byte(raw), &result); err != nil {
-		// Try to fallback using regex if not clean JSON
+		// fallback with regex
 		re := regexp.MustCompile(`(?i)"?risk"?\s*[:=]\s*"?(High|Medium|Low)"?`)
 		riskMatch := re.FindStringSubmatch(raw)
-		summary := strings.TrimSpace(raw)
 		if len(riskMatch) >= 2 {
-			result.Risk = riskMatch[1]
-			result.Summary = summary
-			return formatOutput(result), nil
+			return RootCauseSummary{
+				Risk:    riskMatch[1],
+				Summary: strings.TrimSpace(raw),
+			}, nil
 		}
-		return raw, nil // fallback to raw text
+		return RootCauseSummary{
+			Risk:    "Unknown",
+			Summary: strings.TrimSpace(raw),
+		}, nil
 	}
 
-	return formatOutput(result), nil
+	return result, nil
 }
+
 
 func buildPrompt(input SummaryInput) string {
 	var sb strings.Builder
@@ -105,8 +109,8 @@ func formatOutput(result RootCauseSummary) string {
 	return fmt.Sprintf("RISK: %s\nSUMMARY: %s", result.Risk, result.Summary)
 }
 
-func SummarizeMany(correlations []AlertCorrelation) (map[string]string, error) {
-	results := make(map[string]string)
+func SummarizeMany(correlations []AlertCorrelation) (map[string]RootCauseSummary, error) {
+	results := make(map[string]RootCauseSummary)
 
 	// Group all correlations by service
 	grouped := make(map[string][]AlertCorrelation)
@@ -119,7 +123,10 @@ func SummarizeMany(correlations []AlertCorrelation) (map[string]string, error) {
 		input := SummaryInput{Correlations: group}
 		summary, err := Summarize(input)
 		if err != nil {
-			results[service] = "RISK: Unknown\nSUMMARY: LLM error or insufficient data"
+			results[service] = RootCauseSummary{
+				Risk:    "Unknown",
+				Summary: "LLM error or insufficient data",
+			}
 			continue
 		}
 		results[service] = summary

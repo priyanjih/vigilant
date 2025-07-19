@@ -27,6 +27,7 @@ type APIMetric struct {
 	Symptoms  []APISymptom `json:"symptoms"`
 	Metrics   []APIMetric  `json:"metrics"`
 	Summary   string       `json:"summary"`
+	Risk     string `json:"risk"`
   }
   
 var (

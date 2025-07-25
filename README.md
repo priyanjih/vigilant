@@ -79,6 +79,8 @@ log_patterns:
 # .env
 PROM_URL=http://localhost:9090
 OPENAI_API_KEY=your_openai_key_here  # Optional, for LLM summaries
+ELASTICSEARCH_URL=http://elastic.local:8080/
+ES_INDEX_PATTERN=logs-*
 
 ```
 

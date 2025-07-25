@@ -1,0 +1,81 @@
+# This config matches the exact alert name "IstioProxyHighCPU"
+log_file: /var/log/istio/proxy.log
+
+# Elasticsearch configuration targeting hippie-shop namespace
+elasticsearch:
+  index_pattern: "*"
+  time_range_minutes: 720  # 12 hours for testing
+  scan_limit: 1000
+  service_fields: ["service", "container", "kubernetes.container.name"]
+  namespace_filter: "hippie-shop"  # Target hippie-shop namespace for testing
+
+log_patterns:
+  # Generic patterns that should match in most environments (for testing)
+  - label: "error_generic"
+    regex: "(?i)error|exception|failed|failure"
+  - label: "warning_generic"
+    regex: "(?i)warn|warning"
+  - label: "timeout_generic"
+    regex: "(?i)timeout|timed.*out"
+  - label: "connection_issues"
+    regex: "(?i)connection.*refused|connect.*failed|connection.*reset"
+  - label: "http_errors"
+    regex: "(?i)5\\d\\d|4\\d\\d"
+  - label: "kubernetes_events"
+    regex: "(?i)pod|container|namespace|deployment"
+  
+  # Istio specific patterns (more targeted)
+  - label: "istio_proxy"
+    regex: "(?i)istio.*proxy|envoy|pilot"
+  - label: "service_mesh_error"
+    regex: "(?i)upstream.*error|circuit.*breaker|rate.*limit"
+
+metrics:
+  # Basic container metrics (always available in k8s)
+  - name: "ContainerExists"
+    query_tpl: 'kube_pod_container_info{container="istio-proxy"}'
+    operator: ">"
+    threshold: 0
+    weight: 1
+  
+  # Pod restart count (should be low normally)
+  - name: "PodRestarts"
+    query_tpl: 'kube_pod_container_status_restarts_total{container="istio-proxy"}'
+    operator: ">"
+    threshold: 0
+    weight: 2
+  
+  # Container ready status (should be 1)
+  - name: "ContainerReady"
+    query_tpl: 'kube_pod_container_status_ready{container="istio-proxy"}'
+    operator: "<"
+    threshold: 1
+    weight: 3
+  
+  # Container running status (should be 1)
+  - name: "ContainerRunning"
+    query_tpl: 'kube_pod_container_status_running{container="istio-proxy"}'
+    operator: "<"  
+    threshold: 1
+    weight: 3
+  
+  # CPU requests vs limits (basic resource check)
+  - name: "CPURequests"
+    query_tpl: 'kube_pod_container_resource_requests{container="istio-proxy", resource="cpu"}'
+    operator: ">"
+    threshold: 0
+    weight: 1
+  
+  # Memory requests (basic resource check)  
+  - name: "MemoryRequests"
+    query_tpl: 'kube_pod_container_resource_requests{container="istio-proxy", resource="memory"}'
+    operator: ">"
+    threshold: 0
+    weight: 1
+  
+  # Alternative: Simple up metric if available
+  - name: "PrometheusUp"
+    query_tpl: 'up{job="kube-state-metrics"}'
+    operator: "<"
+    threshold: 1
+    weight: 1

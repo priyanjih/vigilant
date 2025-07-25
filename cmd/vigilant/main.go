@@ -73,15 +73,12 @@ func main() {
 		fmt.Println("Successfully connected to Elasticsearch")
 	}
 
-	// Get configuration for log scanning
-	esIndexPattern := os.Getenv("ES_INDEX_PATTERN")
-	if esIndexPattern == "" {
-		esIndexPattern = "logs-*"
-		fmt.Println("ES_INDEX_PATTERN not set in env, using default:", esIndexPattern)
+	// Default ES configuration (can be overridden per service)
+	defaultESIndexPattern := os.Getenv("ES_INDEX_PATTERN")
+	if defaultESIndexPattern == "" {
+		defaultESIndexPattern = "logs-*"
+		fmt.Println("ES_INDEX_PATTERN not set in env, using default:", defaultESIndexPattern)
 	}
-
-	logScanLimit := 500 // You might want to make this configurable too
-	logTimeRange := 10 * time.Minute // How far back to look in logs
 
 	// Start REST API server
 	go api.StartServer()
@@ -96,13 +93,20 @@ func main() {
 
 	// Create service mapping from loaded profiles
 	serviceMapping := logs.NewServiceMapping(profiles)
+	
+	// Create map of valid services for alert filtering
+	validServices := make(map[string]bool)
+	for serviceName := range profiles {
+		validServices[serviceName] = true
+	}
+	fmt.Printf("Loaded %d service configurations: %v\n", len(validServices), getServiceNames(validServices))
 
 	var lastState StateSnapshot
 	maxLLMUpdateAge := 5 * time.Minute // Force LLM update every 5 minutes regardless
 
 	for {
 		fmt.Println("Fetching alerts...")
-		alerts, err := prometheus.FetchAlerts(promURL)
+		alerts, err := prometheus.FetchAlerts(promURL, validServices)
 		if err != nil {
 			fmt.Println("Error fetching alerts:", err)
 			continue
@@ -110,6 +114,16 @@ func main() {
 
 		tracker.UpdateFromAlerts(alerts)
 		tracker.CleanupExpired()
+		
+		// Log active alerts being processed
+		if len(tracker.Items) > 0 {
+			fmt.Printf("Processing %d active alerts:\n", len(tracker.Items))
+			for _, item := range tracker.Items {
+				fmt.Printf("[ALERT] %s on %s (severity: %s)\n", item.AlertName, item.Service, item.Severity)
+			}
+		} else {
+			fmt.Println("No active alerts to process")
+		}
 
 		seen := map[string]bool{}
 		var correlations []summarizer.AlertCorrelation
@@ -149,13 +163,36 @@ func main() {
 			// Logs - Use Elasticsearch if available, otherwise fall back to file-based
 			var symptoms []logs.SymptomMatch
 			if esClient != nil {
-				// Use Elasticsearch
-				symptoms, err = esClient.ScanLogsAndMatchSymptoms(
-					esIndexPattern,
-					logScanLimit,
+				// Get service-specific ES configuration or use defaults
+				indexPattern := profile.Elasticsearch.IndexPattern
+				if indexPattern == "" {
+					indexPattern = defaultESIndexPattern
+				}
+				
+				scanLimit := profile.Elasticsearch.ScanLimit
+				if scanLimit == 0 {
+					scanLimit = 500 // default
+				}
+				
+				timeRangeMin := profile.Elasticsearch.TimeRangeMin
+				if timeRangeMin == 0 {
+					timeRangeMin = 10 // default
+				}
+				timeRange := time.Duration(timeRangeMin) * time.Minute
+				
+				namespaceFilter := profile.Elasticsearch.NamespaceFilter
+				
+				fmt.Printf("ES scan for %s: index=%s, limit=%d, time=%dmin, namespace=%s\n", 
+					service, indexPattern, scanLimit, timeRangeMin, namespaceFilter)
+				
+				// Use Elasticsearch with namespace filtering
+				symptoms, err = esClient.ScanLogsAndMatchSymptomsWithFilter(
+					indexPattern,
+					scanLimit,
 					profile.LogPatterns,
-					logTimeRange,
-					serviceMapping, // Pass the service mapping
+					timeRange,
+					serviceMapping,
+					namespaceFilter,
 				)
 				if err != nil {
 					fmt.Printf("Error scanning Elasticsearch logs for %s: %v\n", service, err)
@@ -163,7 +200,7 @@ func main() {
 					
 					// Fallback to file-based if ES fails
 					if profile.LogFile != "" {
-						symptoms, err = logs.ScanLogsAndMatchSymptoms(profile.LogFile, logScanLimit, profile.LogPatterns)
+						symptoms, err = logs.ScanLogsAndMatchSymptoms(profile.LogFile, scanLimit, profile.LogPatterns)
 						if err != nil {
 							fmt.Printf("File-based fallback also failed for %s: %v\n", service, err)
 						}
@@ -172,7 +209,11 @@ func main() {
 			} else {
 				// Use file-based scanning
 				if profile.LogFile != "" {
-					symptoms, err = logs.ScanLogsAndMatchSymptoms(profile.LogFile, logScanLimit, profile.LogPatterns)
+					scanLimit := profile.Elasticsearch.ScanLimit
+					if scanLimit == 0 {
+						scanLimit = 500 // default
+					}
+					symptoms, err = logs.ScanLogsAndMatchSymptoms(profile.LogFile, scanLimit, profile.LogPatterns)
 					if err != nil {
 						fmt.Printf("Error scanning file logs for %s: %v\n", service, err)
 					}
@@ -184,7 +225,12 @@ func main() {
 			// Filter symptoms for current service (important for ES which might return all services)
 			var serviceSymptoms []logs.SymptomMatch
 			for _, sym := range symptoms {
-				if sym.Service == service {
+				// Map symptoms to the service we're processing (since ES might return generic matches)
+				if sym.Service == service || sym.Service == "unknown" {
+					// Force map unknown symptoms to the current service we're processing
+					if sym.Service == "unknown" {
+						sym.Service = service
+					}
 					serviceSymptoms = append(serviceSymptoms, sym)
 					fmt.Printf("[SYMPTOM] %s matched on %s (%d times)\n", sym.Pattern, sym.Service, sym.Count)
 					simplifiedSymptoms = append(simplifiedSymptoms, hashutil.SimplifiedSymptom{
@@ -300,4 +346,13 @@ func main() {
 
 		time.Sleep(30 * time.Second)
 	}
+}
+
+// getServiceNames extracts service names from validServices map for logging
+func getServiceNames(validServices map[string]bool) []string {
+	var names []string
+	for name := range validServices {
+		names = append(names, name)
+	}
+	return names
 }

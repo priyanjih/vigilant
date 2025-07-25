@@ -77,6 +77,18 @@ func (es *ElasticsearchClient) ScanLogsAndMatchSymptoms(
 	timeRange time.Duration,
 	serviceMapping *ServiceMapping,
 ) ([]SymptomMatch, error) {
+	return es.ScanLogsAndMatchSymptomsWithFilter(indexPattern, limit, patterns, timeRange, serviceMapping, "")
+}
+
+// ScanLogsAndMatchSymptomsWithFilter queries Elasticsearch with namespace filtering
+func (es *ElasticsearchClient) ScanLogsAndMatchSymptomsWithFilter(
+	indexPattern string,
+	limit int,
+	patterns []config.LogPattern,
+	timeRange time.Duration,
+	serviceMapping *ServiceMapping,
+	namespaceFilter string,
+) ([]SymptomMatch, error) {
 	
 	// Compile regex patterns
 	compiled := []PatternDef{}
@@ -92,19 +104,23 @@ func (es *ElasticsearchClient) ScanLogsAndMatchSymptoms(
 	}
 
 	// Build Elasticsearch query
-	query := buildQuery(timeRange, limit)
+	query := buildQueryWithNamespace(timeRange, limit, namespaceFilter)
 	
 	// Execute search
 	logs, err := es.searchLogs(indexPattern, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search logs: %w", err)
 	}
+	
+	fmt.Printf("ES DEBUG: Found %d logs in index %s\n", len(logs), indexPattern)
 
 	// Process logs and match patterns
 	matches := map[string]*SymptomMatch{}
+	serviceCount := make(map[string]int)
 	
 	for _, log := range logs {
 		service := serviceMapping.extractServiceFromLog(log)
+		serviceCount[service]++
 		
 		for _, p := range compiled {
 			if p.Regex.MatchString(log.Message) {
@@ -125,6 +141,8 @@ func (es *ElasticsearchClient) ScanLogsAndMatchSymptoms(
 			}
 		}
 	}
+	
+	fmt.Printf("ES DEBUG: Service distribution: %v\n", serviceCount)
 
 	// Convert map to slice
 	var result []SymptomMatch
@@ -170,21 +188,61 @@ func (es *ElasticsearchClient) searchLogs(indexPattern string, query map[string]
 	return logs, nil
 }
 
-// buildQuery creates the Elasticsearch query
+// buildQuery creates the Elasticsearch query (backward compatibility)
 func buildQuery(timeRange time.Duration, limit int) map[string]interface{} {
+	return buildQueryWithNamespace(timeRange, limit, "")
+}
+
+// buildQueryWithNamespace creates the Elasticsearch query with optional namespace filtering
+func buildQueryWithNamespace(timeRange time.Duration, limit int, namespaceFilter string) map[string]interface{} {
+	mustClauses := []map[string]interface{}{
+		{
+			"range": map[string]interface{}{
+				"@timestamp": map[string]interface{}{
+					"gte": time.Now().Add(-timeRange).Format(time.RFC3339),
+					"lte": time.Now().Format(time.RFC3339),
+				},
+			},
+		},
+	}
+
+	// Add namespace filter if specified (try multiple field variations)
+	if namespaceFilter != "" {
+		shouldClauses := []map[string]interface{}{
+			{
+				"term": map[string]interface{}{
+					"kubernetes.namespace_name.keyword": namespaceFilter,
+				},
+			},
+			{
+				"term": map[string]interface{}{
+					"kubernetes.namespace_name": namespaceFilter,
+				},
+			},
+			{
+				"term": map[string]interface{}{
+					"kubernetes.namespace.keyword": namespaceFilter,
+				},
+			},
+			{
+				"term": map[string]interface{}{
+					"namespace.keyword": namespaceFilter,
+				},
+			},
+		}
+		
+		mustClauses = append(mustClauses, map[string]interface{}{
+			"bool": map[string]interface{}{
+				"should": shouldClauses,
+				"minimum_should_match": 1,
+			},
+		})
+	}
+
 	query := map[string]interface{}{
 		"query": map[string]interface{}{
 			"bool": map[string]interface{}{
-				"must": []map[string]interface{}{
-					{
-						"range": map[string]interface{}{
-							"@timestamp": map[string]interface{}{
-								"gte": time.Now().Add(-timeRange).Format(time.RFC3339),
-								"lte": time.Now().Format(time.RFC3339),
-							},
-						},
-					},
-				},
+				"must": mustClauses,
 			},
 		},
 		"sort": []map[string]interface{}{

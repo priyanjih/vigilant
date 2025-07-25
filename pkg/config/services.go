@@ -14,10 +14,19 @@ type LogPattern struct {
 	Regex string `yaml:"regex"`
 }
 
+type ElasticsearchConfig struct {
+	IndexPattern     string   `yaml:"index_pattern,omitempty"`
+	TimeRangeMin     int      `yaml:"time_range_minutes,omitempty"`
+	ScanLimit        int      `yaml:"scan_limit,omitempty"`
+	ServiceFields    []string `yaml:"service_fields,omitempty"`
+	NamespaceFilter  string   `yaml:"namespace_filter,omitempty"`
+}
+
 type ServiceProfile struct {
-	LogFile     string                   `yaml:"log_file"`
-	LogPatterns []LogPattern             `yaml:"log_patterns"`
-	Metrics     []prometheus.MetricCheck `yaml:"metrics"`
+	LogFile        string                   `yaml:"log_file"`
+	LogPatterns    []LogPattern             `yaml:"log_patterns"`
+	Metrics        []prometheus.MetricCheck `yaml:"metrics"`
+	Elasticsearch  ElasticsearchConfig      `yaml:"elasticsearch,omitempty"`
 }
 
 

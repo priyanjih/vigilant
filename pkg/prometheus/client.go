@@ -18,8 +18,8 @@ type Alert struct {
 	StartsAt time.Time
 }
 
-// FetchAlerts fetches firing alerts from Prometheus
-func FetchAlerts(promURL string) ([]Alert, error) {
+// FetchAlerts fetches firing alerts from Prometheus, filtered by configured services
+func FetchAlerts(promURL string, validServices map[string]bool) ([]Alert, error) {
 	resp, err := http.Get(fmt.Sprintf("%s/api/v1/alerts", promURL))
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch alerts: %w", err)
@@ -57,15 +57,14 @@ func FetchAlerts(promURL string) ([]Alert, error) {
 				Name:     getLabel(a.Labels, "alertname"),
 				Instance: getLabel(a.Labels, "instance"),
 				Severity: getLabel(a.Labels, "severity"),
-				Service:  extractServiceFromLabels(a.Labels),
+				Service:  extractServiceFromLabels(a.Labels, validServices),
 				StartsAt: a.StartsAt,
 			}
 			
-
-			fmt.Printf("DEBUG Alert '%s' labels: %+v -> Service: '%s'\n", 
-				alert.Name, a.Labels, alert.Service)
-			
-			alerts = append(alerts, alert)
+			// Only include alerts for services that have configurations
+			if len(validServices) == 0 || validServices[alert.Service] {
+				alerts = append(alerts, alert)
+			}
 		}
 	}
 
@@ -80,77 +79,26 @@ func getLabel(labels map[string]string, key string) string {
 	return ""
 }
 
-func extractServiceFromLabels(labels map[string]string) string {
-
-	if job, exists := labels["job"]; exists && job == "kube-state-metrics" {
-
-		if alertname, exists := labels["alertname"]; exists {
-			return extractKubernetesServiceName(alertname, labels)
-		}
-		return "kubernetes-cluster"
+func extractServiceFromLabels(labels map[string]string, validServices map[string]bool) string {
+	alertname := getLabel(labels, "alertname")
+	
+	// Strategy 1: Exact alertname match with configured services (case-sensitive)
+	if validServices[alertname] {
+		return alertname
 	}
 	
-
-	serviceLabels := []string{
-		"service",           
-		"app",            
-		"job",              
-		"component",        
-		"app_kubernetes_io_name", 
-		"k8s_app",         
-		"application",      
-		"workload",        
-		"deployment",     
-	}
-
-	// Try each label in order
-	for _, labelName := range serviceLabels {
-		if service, exists := labels[labelName]; exists && service != "" {
-			return cleanServiceName(service)
+	// Strategy 2: Case-insensitive exact alertname match
+	for serviceName := range validServices {
+		if strings.EqualFold(alertname, serviceName) {
+			return serviceName
 		}
 	}
-
-
-	if instance, exists := labels["instance"]; exists && instance != "" {
-		return extractServiceFromInstance(instance)
-	}
-
-	if alertname, exists := labels["alertname"]; exists && alertname != "" {
-		return extractServiceFromAlertname(alertname)
-	}
-
+	
+	// If no exact match found, return unknown
+	// This ensures clean service mapping without ambiguous partial matches
 	return "unknown"
 }
 
-// extractKubernetesServiceName creates service names for Kubernetes monitoring alerts
-func extractKubernetesServiceName(alertname string, labels map[string]string) string {
-	switch {
-	case strings.Contains(alertname, "Pod") || strings.Contains(alertname, "pod"):
-
-		if namespace, exists := labels["namespace"]; exists && namespace != "" {
-			return fmt.Sprintf("kubernetes-pods-%s", namespace)
-		}
-		return "kubernetes-pods"
-		
-	case strings.Contains(alertname, "Node") || strings.Contains(alertname, "node"):
-		return "kubernetes-nodes"
-		
-	case strings.Contains(alertname, "Deployment") || strings.Contains(alertname, "deployment"):
-		if namespace, exists := labels["namespace"]; exists && namespace != "" {
-			return fmt.Sprintf("kubernetes-deployments-%s", namespace)
-		}
-		return "kubernetes-deployments"
-		
-	case strings.Contains(alertname, "Persistent") || strings.Contains(alertname, "Volume"):
-		return "kubernetes-storage"
-		
-	case strings.Contains(alertname, "Namespace") || strings.Contains(alertname, "namespace"):
-		return "kubernetes-namespaces"
-		
-	default:
-		return "kubernetes-cluster"
-	}
-}
 
 // cleanServiceName cleans up service names
 func cleanServiceName(service string) string {

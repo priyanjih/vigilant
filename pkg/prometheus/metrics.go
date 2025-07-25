@@ -12,7 +12,7 @@ import (
 // metric-based rule to check against Prometheus
 type MetricCheck struct {
     Name      string  `yaml:"name"`
-    QueryTpl  string  `yaml:"query_tpl"`  // Make sure this matches your YAML field
+    QueryTpl  string  `yaml:"query_tpl"`  
     Operator  string  `yaml:"operator"`
     Threshold float64 `yaml:"threshold"`
     Weight    int     `yaml:"weight"`

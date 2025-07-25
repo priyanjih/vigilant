@@ -57,6 +57,32 @@ func main() {
 		fmt.Println("PROM_URL not set in env, using default:", promURL)
 	}
 
+	// Initialize Elasticsearch client
+	esURLs := []string{os.Getenv("ELASTICSEARCH_URL")}
+	if esURLs[0] == "" {
+		esURLs = []string{"http://localhost:9200"}
+		fmt.Println("ELASTICSEARCH_URL not set in env, using default:", esURLs[0])
+	}
+
+	esClient, err := logs.NewElasticsearchClient(esURLs)
+	if err != nil {
+		fmt.Printf("Failed to initialize Elasticsearch client: %v\n", err)
+		fmt.Println("Falling back to file-based log scanning...")
+		esClient = nil
+	} else {
+		fmt.Println("Successfully connected to Elasticsearch")
+	}
+
+	// Get configuration for log scanning
+	esIndexPattern := os.Getenv("ES_INDEX_PATTERN")
+	if esIndexPattern == "" {
+		esIndexPattern = "logs-*"
+		fmt.Println("ES_INDEX_PATTERN not set in env, using default:", esIndexPattern)
+	}
+
+	logScanLimit := 500 // You might want to make this configurable too
+	logTimeRange := 10 * time.Minute // How far back to look in logs
+
 	// Start REST API server
 	go api.StartServer()
 
@@ -67,6 +93,9 @@ func main() {
 		fmt.Println("Failed to load service configs:", err)
 		return
 	}
+
+	// Create service mapping from loaded profiles
+	serviceMapping := logs.NewServiceMapping(profiles)
 
 	var lastState StateSnapshot
 	maxLLMUpdateAge := 5 * time.Minute // Force LLM update every 5 minutes regardless
@@ -117,23 +146,55 @@ func main() {
 				continue
 			}
 
-			// Logs
-			symptoms, err := logs.ScanLogsAndMatchSymptoms(profile.LogFile, 500, profile.LogPatterns)
-			if err != nil {
-				fmt.Println("Error scanning logs for", service, ":", err)
-			} else {
-				currentSymptomCount += len(symptoms)
-				for _, sym := range symptoms {
-					if sym.Service == service {
-						fmt.Printf("[SYMPTOM] %s matched on %s (%d times)\n", sym.Pattern, sym.Service, sym.Count)
-						simplifiedSymptoms = append(simplifiedSymptoms, hashutil.SimplifiedSymptom{
-							Service: sym.Service,
-							Pattern: sym.Pattern,
-							Count:   sym.Count,
-						})
+			// Logs - Use Elasticsearch if available, otherwise fall back to file-based
+			var symptoms []logs.SymptomMatch
+			if esClient != nil {
+				// Use Elasticsearch
+				symptoms, err = esClient.ScanLogsAndMatchSymptoms(
+					esIndexPattern,
+					logScanLimit,
+					profile.LogPatterns,
+					logTimeRange,
+					serviceMapping, // Pass the service mapping
+				)
+				if err != nil {
+					fmt.Printf("Error scanning Elasticsearch logs for %s: %v\n", service, err)
+					fmt.Println("Attempting fallback to file-based scanning...")
+					
+					// Fallback to file-based if ES fails
+					if profile.LogFile != "" {
+						symptoms, err = logs.ScanLogsAndMatchSymptoms(profile.LogFile, logScanLimit, profile.LogPatterns)
+						if err != nil {
+							fmt.Printf("File-based fallback also failed for %s: %v\n", service, err)
+						}
 					}
 				}
+			} else {
+				// Use file-based scanning
+				if profile.LogFile != "" {
+					symptoms, err = logs.ScanLogsAndMatchSymptoms(profile.LogFile, logScanLimit, profile.LogPatterns)
+					if err != nil {
+						fmt.Printf("Error scanning file logs for %s: %v\n", service, err)
+					}
+				} else {
+					fmt.Printf("No log file configured for service %s and Elasticsearch unavailable\n", service)
+				}
 			}
+
+			// Filter symptoms for current service (important for ES which might return all services)
+			var serviceSymptoms []logs.SymptomMatch
+			for _, sym := range symptoms {
+				if sym.Service == service {
+					serviceSymptoms = append(serviceSymptoms, sym)
+					fmt.Printf("[SYMPTOM] %s matched on %s (%d times)\n", sym.Pattern, sym.Service, sym.Count)
+					simplifiedSymptoms = append(simplifiedSymptoms, hashutil.SimplifiedSymptom{
+						Service: sym.Service,
+						Pattern: sym.Pattern,
+						Count:   sym.Count,
+					})
+				}
+			}
+			currentSymptomCount += len(serviceSymptoms)
 
 			// Metrics
 			var checks []prometheus.MetricCheck
@@ -167,7 +228,7 @@ func main() {
 
 			correlations = append(correlations, summarizer.AlertCorrelation{
 				Alert:    *item,
-				Symptoms: symptoms,
+				Symptoms: serviceSymptoms, // Use filtered symptoms
 				Metrics:  metrics,
 			})
 
@@ -175,7 +236,7 @@ func main() {
 				Service:  service,
 				Alert:    item.AlertName,
 				Severity: item.Severity,
-				Symptoms: utils.ConvertSymptoms(symptoms),
+				Symptoms: utils.ConvertSymptoms(serviceSymptoms), // Use filtered symptoms
 				Metrics:  utils.ConvertMetrics(metrics),				
 				Summary:  "", // will be updated after LLM
 			})
@@ -223,15 +284,13 @@ func main() {
 					if s, ok := summaryMap[uiData[i].Service]; ok {
 						uiData[i].Summary = s.Summary
 						uiData[i].Risk = s.Risk
+					}
 				}
-				currentState.LastLLMUpdate = time.Now()
-				lastState = currentState
 			}
 			
 			// Update the timestamp
 			currentState.LastLLMUpdate = time.Now()
 			lastState = currentState
-		}
 		} else {
 			fmt.Println("No changes detected. Skipping LLM summary.")
 		}

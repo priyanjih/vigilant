@@ -1,8 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -10,6 +14,7 @@ import (
 	"vigilant/pkg/api"
 	"vigilant/pkg/config"
 	"vigilant/pkg/hashutil"
+	"vigilant/pkg/llmcache"
 	"vigilant/pkg/logs"
 	"vigilant/pkg/prometheus"
 	"vigilant/pkg/risk"
@@ -32,6 +37,9 @@ type StateSnapshot struct {
 	LastLLMUpdate time.Time
 }
 
+// LastLLMData stores the most recent successful LLM analysis
+var lastSuccessfulLLMData = make(map[string]summarizer.RootCauseSummary)
+
 func (s *StateSnapshot) HasChanged(other StateSnapshot) bool {
 	return s.AlertCount != other.AlertCount ||
 		s.SymptomCount != other.SymptomCount ||
@@ -47,7 +55,7 @@ func (s *StateSnapshot) ShouldForceUpdate(maxAge time.Duration) bool {
 
 func main() {
 	fmt.Println("Starting Vigilant...")
-	if err := godotenv.Load("../../.env"); err != nil {
+	if err := godotenv.Load(".env"); err != nil {
 		fmt.Println("Warning: .env file not found or failed to load.")
 	}
 
@@ -80,12 +88,41 @@ func main() {
 		fmt.Println("ES_INDEX_PATTERN not set in env, using default:", defaultESIndexPattern)
 	}
 
-	// Start REST API server
-	go api.StartServer()
+	// Set up signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Start REST API server (non-blocking)
+	server := api.StartServer()
+
+	// Create a context that can be cancelled for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Graceful shutdown goroutine
+	go func() {
+		<-sigChan
+		fmt.Println("\n🛑 Received shutdown signal, stopping services...")
+		cancel() // Signal all goroutines to stop
+		
+		// Shutdown API server gracefully
+		if server != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := server.Shutdown(ctx); err != nil {
+				fmt.Printf("API server shutdown error: %v\n", err)
+			} else {
+				fmt.Println("🛑 API server stopped gracefully")
+			}
+		}
+		os.Exit(0)
+	}()
 
 	tracker := risk.NewRiskTracker(2 * time.Minute)
+	
+	// Initialize LLM cache with 15-minute TTL
+	llmCache := llmcache.NewLLMCache(15 * time.Minute)
 
-	profiles, err := config.LoadServiceProfiles("../../config/services")
+	profiles, err := config.LoadServiceProfiles("config/services")
 	if err != nil {
 		fmt.Println("Failed to load service configs:", err)
 		return
@@ -100,16 +137,45 @@ func main() {
 		validServices[serviceName] = true
 	}
 	fmt.Printf("Loaded %d service configurations: %v\n", len(validServices), getServiceNames(validServices))
+	
+	// Debug: Check what alerts are available from Prometheus
+	fmt.Println("DEBUG: Checking available alerts from Prometheus...")
+	allAlerts, err := prometheus.FetchAlerts(promURL, make(map[string]bool)) // Get all alerts
+	if err != nil {
+		fmt.Printf("DEBUG: Error fetching all alerts: %v\n", err)
+	} else {
+		fmt.Printf("DEBUG: Found %d total alerts from Prometheus:\n", len(allAlerts))
+		for _, alert := range allAlerts {
+			fmt.Printf("DEBUG:   Alert: %s, Service: %s, Severity: %s\n", alert.Name, alert.Service, alert.Severity)
+		}
+	}
 
-	var lastState StateSnapshot
-	maxLLMUpdateAge := 5 * time.Minute // Force LLM update every 5 minutes regardless
+	// Initialize with current time to prevent initial forced updates
+	var lastState StateSnapshot = StateSnapshot{
+		LastLLMUpdate: time.Now(),
+	}
+	maxLLMUpdateAge := 30 * time.Minute // Reduced frequency for forced updates
 
 	for {
+		// Check if we should stop
+		select {
+		case <-ctx.Done():
+			fmt.Println("Monitoring loop stopped by context cancellation")
+			return
+		default:
+		}
+
 		fmt.Println("Fetching alerts...")
 		alerts, err := prometheus.FetchAlerts(promURL, validServices)
 		if err != nil {
 			fmt.Println("Error fetching alerts:", err)
-			continue
+			// Use context-aware sleep for early cancellation
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(30 * time.Second):
+				continue
+			}
 		}
 
 		tracker.UpdateFromAlerts(alerts)
@@ -148,17 +214,25 @@ func main() {
 		}
 
 		for _, item := range tracker.Items {
-			service := item.Service
-			if seen[service] {
+			// Try to match alert name to profile name first, then fall back to service name
+			profileKey := item.AlertName
+			if _, ok := profiles[profileKey]; !ok {
+				profileKey = item.Service
+			}
+			
+			if seen[profileKey] {
 				continue
 			}
-			seen[service] = true
+			seen[profileKey] = true
 
-			profile, ok := profiles[service]
+			profile, ok := profiles[profileKey]
 			if !ok {
-				fmt.Println("No profile found for service:", service)
+				fmt.Printf("No profile found for alert '%s' or service '%s'\n", item.AlertName, item.Service)
 				continue
 			}
+			
+			// Use the profile key as the service name for processing
+			service := profileKey
 
 			// Logs - Use Elasticsearch if available, otherwise fall back to file-based
 			var symptoms []logs.SymptomMatch
@@ -279,12 +353,19 @@ func main() {
 			})
 
 			uiData = append(uiData, api.APIRiskItem{
-				Service:  service,
-				Alert:    item.AlertName,
-				Severity: item.Severity,
-				Symptoms: utils.ConvertSymptoms(serviceSymptoms), // Use filtered symptoms
-				Metrics:  utils.ConvertMetrics(metrics),				
-				Summary:  "", // will be updated after LLM
+				Service:          service,
+				Alert:            item.AlertName,
+				Severity:         item.Severity,
+				Symptoms:         utils.ConvertSymptoms(serviceSymptoms),
+				Metrics:          utils.ConvertMetrics(metrics),
+				Summary:          "", // will be updated after LLM
+				Risk:             "Unknown",
+				Confidence:       0.0,
+				RootCause:        "",
+				ImmediateActions: []string{},
+				Investigation:    []string{},
+				Prevention:       "",
+				Timestamp:        time.Now().Format("2006-01-02 15:04:05 UTC"),
 			})
 		}
 
@@ -299,8 +380,8 @@ func main() {
 			LastLLMUpdate: lastState.LastLLMUpdate,
 		}
 
-		// Check if anything changed or if we need a forced update
-		needsLLMUpdate := currentState.HasChanged(lastState) || currentState.ShouldForceUpdate(maxLLMUpdateAge)
+		// Smart LLM decision: only process if we have correlations and changes detected
+		shouldCallLLM := len(correlations) > 0 && currentState.HasChanged(lastState)
 
 		if currentState.HasChanged(lastState) {
 			fmt.Printf("Changes detected:\n")
@@ -313,38 +394,108 @@ func main() {
 			fmt.Printf("  Metrics: %d→%d (hash: %s→%s)\n", 
 				lastState.MetricCount, currentState.MetricCount,
 				hashutil.SafeHashDisplay(lastState.MetricsHash), hashutil.SafeHashDisplay(currentState.MetricsHash))
-		} else if currentState.ShouldForceUpdate(maxLLMUpdateAge) {
-			fmt.Printf("Forcing LLM update - last update was %v ago\n", time.Since(lastState.LastLLMUpdate))
 		}
 
-		if needsLLMUpdate {
-			summaryMap, err := summarizer.SummarizeMany(correlations)
+		// Handle forced updates only if we have active alerts and significant time has passed
+		if len(correlations) > 0 && !shouldCallLLM && currentState.ShouldForceUpdate(maxLLMUpdateAge) {
+			fmt.Printf("Forcing LLM update - last update was %v ago with %d active alerts\n", 
+				time.Since(lastState.LastLLMUpdate), len(correlations))
+			shouldCallLLM = true
+		}
+
+		if shouldCallLLM {
+			// Clean up expired cache entries periodically
+			llmCache.CleanupExpired()
+			
+			// Use cache-aware LLM call
+			summaryMap, err := llmCache.GetOrSummarize(correlations)
 			if err != nil {
 				fmt.Println("Error generating per-service summaries:", err)
 			} else {
 				fmt.Println("=== Root Cause Summaries ===")
 				for svc, summary := range summaryMap {
-					fmt.Printf("[%s]\n%s\n\n", svc, summary)
+					fmt.Printf("[%s]\nRisk: %s (%.1f%% confidence)\nRoot Cause: %s\nSummary: %s\n\n", 
+						svc, summary.Risk, summary.Confidence*100, summary.RootCause, summary.Summary)
 				}
+				// Store successful LLM data for reuse
+				for svc, summary := range summaryMap {
+					lastSuccessfulLLMData[svc] = summary
+				}
+				
+				// Apply LLM data to uiData 
 				for i := range uiData {
 					if s, ok := summaryMap[uiData[i].Service]; ok {
 						uiData[i].Summary = s.Summary
 						uiData[i].Risk = s.Risk
+						uiData[i].Confidence = s.Confidence
+						uiData[i].RootCause = s.RootCause
+						uiData[i].ImmediateActions = s.ImmediateActions
+						uiData[i].Investigation = s.Investigation
+						uiData[i].Prevention = s.Prevention
+						
+						// Calculate score based on risk level and confidence
+						score := 0
+						switch strings.ToLower(s.Risk) {
+						case "critical":
+							score = 90 + int(s.Confidence*10)
+						case "high":
+							score = 70 + int(s.Confidence*20)
+						case "medium":
+							score = 40 + int(s.Confidence*30)
+						case "low":
+							score = 10 + int(s.Confidence*30)
+						}
+						uiData[i].Score = score
 					}
 				}
 			}
 			
-			// Update the timestamp
+			// Update the timestamp only after successful LLM processing
 			currentState.LastLLMUpdate = time.Now()
 			lastState = currentState
 		} else {
-			fmt.Println("No changes detected. Skipping LLM summary.")
+			if len(correlations) == 0 {
+				fmt.Println("No active alerts. Skipping LLM processing.")
+			} else {
+				fmt.Println("No significant changes detected. Using cached LLM data.")
+			}
+			// Apply cached LLM data to preserve enhanced fields
+			for i := range uiData {
+				if s, ok := lastSuccessfulLLMData[uiData[i].Service]; ok {
+					uiData[i].Summary = s.Summary
+					uiData[i].Risk = s.Risk
+					uiData[i].Confidence = s.Confidence
+					uiData[i].RootCause = s.RootCause
+					uiData[i].ImmediateActions = s.ImmediateActions
+					uiData[i].Investigation = s.Investigation
+					uiData[i].Prevention = s.Prevention
+					
+					// Calculate score based on risk level and confidence
+					score := 0
+					switch strings.ToLower(s.Risk) {
+					case "critical":
+						score = 90 + int(s.Confidence*10)
+					case "high":
+						score = 70 + int(s.Confidence*20)
+					case "medium":
+						score = 40 + int(s.Confidence*30)
+					case "low":
+						score = 10 + int(s.Confidence*30)
+					}
+					uiData[i].Score = score
+				}
+			}
 		}
 
-		// Push to REST API memory
+		// Always push data to API - either fresh LLM results or cached data with current metrics
 		api.UpdateRisks(uiData)
 
-		time.Sleep(30 * time.Second)
+		// Context-aware sleep for graceful shutdown
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(30 * time.Second):
+		}
 	}
 }
 

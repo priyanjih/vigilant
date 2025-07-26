@@ -1,0 +1,56 @@
+name: "TargetDown" 
+description: "Service endpoint monitoring"
+
+log_file: "/var/log/prometheus/prometheus.log"
+
+# Elasticsearch configuration for service monitoring
+elasticsearch:
+  index_pattern: "logs-*"
+  scan_limit: 300
+  time_range_min: 5
+  namespace_filter: ""
+
+# Log patterns for service connectivity issues
+log_patterns:
+  - pattern: "connection_refused"
+    description: "Connection refused errors"
+  - pattern: "dial_tcp.*timeout"
+    description: "Connection timeout errors"
+  - pattern: "no_route_to_host"
+    description: "Network routing errors"
+  - pattern: "dns_resolution_failed"
+    description: "DNS resolution failures"
+  - pattern: "tls_handshake_failed"
+    description: "TLS handshake failures"
+  - pattern: "context_deadline_exceeded"
+    description: "Request timeout errors"
+
+# Metrics for service availability
+metrics:
+  - name: "ServiceUp"
+    query_tpl: "up{job!=\"\"}"
+    operator: "<"
+    threshold: 1.0
+    weight: 10
+    description: "Service endpoint down"
+    
+  - name: "HighResponseTime"
+    query_tpl: "http_request_duration_seconds{quantile=\"0.95\"}"
+    operator: ">"
+    threshold: 2.0
+    weight: 8
+    description: "High response time (95th percentile)"
+    
+  - name: "HighErrorRate"
+    query_tpl: "rate(http_requests_total{status=~\"5..\"}[5m])"
+    operator: ">"
+    threshold: 0.05
+    weight: 9
+    description: "High error rate (5xx responses)"
+    
+  - name: "LowSuccessRate"
+    query_tpl: "rate(http_requests_total{status=~\"2..\"}[5m]) / rate(http_requests_total[5m])"
+    operator: "<"
+    threshold: 0.95
+    weight: 8
+    description: "Low success rate"

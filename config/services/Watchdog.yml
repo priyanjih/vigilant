@@ -1,0 +1,54 @@
+name: "Watchdog"
+description: "AlertManager heartbeat monitoring service"
+
+log_file: "/var/log/alertmanager/alertmanager.log"
+
+# Elasticsearch configuration for Watchdog monitoring
+elasticsearch:
+  index_pattern: "logs-*"
+  scan_limit: 500
+  time_range_min: 10
+  namespace_filter: "monitoring"
+
+# Log patterns to look for AlertManager issues
+log_patterns:
+  - pattern: "alertmanager_error"
+    description: "AlertManager errors"
+  - pattern: "webhook_failed" 
+    description: "Webhook delivery failures"
+  - pattern: "notification_failed"
+    description: "Notification delivery failures"
+  - pattern: "cluster_sync_error"
+    description: "Cluster synchronization errors"
+  - pattern: "config_reload_failed"
+    description: "Configuration reload failures"
+
+# Metrics to monitor AlertManager health
+metrics:
+  - name: "AlertManagerUp"
+    query_tpl: "up{job=\"alertmanager\"}"
+    operator: "<"
+    threshold: 1.0
+    weight: 10
+    description: "AlertManager instance down"
+    
+  - name: "AlertManagerConfigReloadFailures"
+    query_tpl: "alertmanager_config_last_reload_successful{job=\"alertmanager\"}"
+    operator: "<"
+    threshold: 1.0
+    weight: 8
+    description: "AlertManager configuration reload failures"
+    
+  - name: "AlertManagerNotificationQueueSize"
+    query_tpl: "alertmanager_notifications_total{job=\"alertmanager\"}"
+    operator: ">"
+    threshold: 100.0
+    weight: 6
+    description: "High notification queue size"
+    
+  - name: "AlertManagerMemoryUsage"
+    query_tpl: "process_resident_memory_bytes{job=\"alertmanager\"}"
+    operator: ">"
+    threshold: 134217728.0  # 128MB
+    weight: 5
+    description: "High memory usage"

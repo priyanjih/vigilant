@@ -1,81 +1,119 @@
-# This config matches the exact alert name "IstioProxyHighCPU"
-log_file: /var/log/istio/proxy.log
+---
+# Enhanced Service Configuration for Istio Proxy High CPU
 
-# Elasticsearch configuration targeting hippie-shop namespace
-elasticsearch:
-  index_pattern: "*"
-  time_range_minutes: 720  # 12 hours for testing
-  scan_limit: 1000
-  service_fields: ["service", "container", "kubernetes.container.name"]
-  namespace_filter: "hippie-shop"  # Target hippie-shop namespace for testing
+# Service Metadata  
+name: "IstioProxyHighCPU"
+description: "Monitors Istio proxy CPU usage and performance issues in service mesh"
+version: "1.2"
+tags: ["istio", "performance", "kubernetes", "service-mesh", "cpu"]
+maintainer: "sre-team@company.com"
 
-log_patterns:
-  # Generic patterns that should match in most environments (for testing)
-  - label: "error_generic"
-    regex: "(?i)error|exception|failed|failure"
-  - label: "warning_generic"
-    regex: "(?i)warn|warning"
-  - label: "timeout_generic"
-    regex: "(?i)timeout|timed.*out"
-  - label: "connection_issues"
-    regex: "(?i)connection.*refused|connect.*failed|connection.*reset"
-  - label: "http_errors"
-    regex: "(?i)5\\d\\d|4\\d\\d"
-  - label: "kubernetes_events"
-    regex: "(?i)pod|container|namespace|deployment"
+# Alert Matching
+alert_pattern: "IstioProxyHighCPU"
+severity_levels: ["warning", "critical"]
+
+# Data Sources
+data_sources:
+  elasticsearch:
+    index_pattern: "${ES_INDEX_PATTERN:-fluentbit-*}"
+    time_range_minutes: 30
+    scan_limit: 1000
+    namespace_filter: "${ISTIO_NAMESPACE:-hippie-shop}"
+    required_fields: ["@timestamp", "log", "kubernetes.container_name", "kubernetes.namespace_name"]
   
-  # Istio specific patterns (more targeted)
-  - label: "istio_proxy"
-    regex: "(?i)istio.*proxy|envoy|pilot"
-  - label: "service_mesh_error"
-    regex: "(?i)upstream.*error|circuit.*breaker|rate.*limit"
+  log_file: "/var/log/istio/proxy.log"
+  
+# Symptom Detection
+log_patterns:
+  - name: "http_4xx_errors"
+    description: "HTTP 4xx client errors in proxy logs"
+    regex: "(?i)\\\"(GET|POST|PUT|DELETE)[^\\\"]*\\\"\\s+4\\d\\d"
+    severity: "warning"
+    
+  - name: "http_5xx_errors" 
+    description: "HTTP 5xx server errors in proxy logs"
+    regex: "(?i)\\\"(GET|POST|PUT|DELETE)[^\\\"]*\\\"\\s+5\\d\\d"
+    severity: "critical"
+    
+  - name: "upstream_connect_error"
+    description: "Upstream connection failures"
+    regex: "(?i)upstream.*connect.*error|upstream.*timeout"
+    severity: "critical"
+    
+  - name: "circuit_breaker_open"
+    description: "Circuit breaker activation"
+    regex: "(?i)circuit.*breaker.*open|circuit.*breaker.*tripped"
+    severity: "warning"
+    
+  - name: "rate_limit_exceeded"
+    description: "Rate limiting triggered"
+    regex: "(?i)rate.*limit.*exceeded|rate.*limited"
+    severity: "warning"
+    
+  - name: "http_errors"  # Keep for backward compatibility
+    description: "Generic HTTP errors"
+    regex: "(?i)5\\d\\d|4\\d\\d"
+    severity: "warning"
 
+# Metrics Monitoring  
 metrics:
-  # Basic container metrics (always available in k8s)
   - name: "ContainerExists"
+    description: "Istio proxy container existence check"
     query_tpl: 'kube_pod_container_info{container="istio-proxy"}'
     operator: ">"
     threshold: 0
     weight: 1
-  
-  # Pod restart count (should be low normally)
+    unit: "boolean"
+    
   - name: "PodRestarts"
+    description: "Pod restart count for istio-proxy"
     query_tpl: 'kube_pod_container_status_restarts_total{container="istio-proxy"}'
     operator: ">"
     threshold: 0
     weight: 2
-  
-  # Container ready status (should be 1)
+    unit: "count"
+    
   - name: "ContainerReady"
+    description: "Container ready status"
     query_tpl: 'kube_pod_container_status_ready{container="istio-proxy"}'
     operator: "<"
     threshold: 1
     weight: 3
-  
-  # Container running status (should be 1)
+    unit: "boolean"
+    
   - name: "ContainerRunning"
+    description: "Container running status"
     query_tpl: 'kube_pod_container_status_running{container="istio-proxy"}'
     operator: "<"  
     threshold: 1
     weight: 3
-  
-  # CPU requests vs limits (basic resource check)
+    unit: "boolean"
+    
   - name: "CPURequests"
+    description: "CPU resource requests"
     query_tpl: 'kube_pod_container_resource_requests{container="istio-proxy", resource="cpu"}'
     operator: ">"
     threshold: 0
     weight: 1
-  
-  # Memory requests (basic resource check)  
+    unit: "cores"
+    
   - name: "MemoryRequests"
+    description: "Memory resource requests"
     query_tpl: 'kube_pod_container_resource_requests{container="istio-proxy", resource="memory"}'
     operator: ">"
     threshold: 0
     weight: 1
-  
-  # Alternative: Simple up metric if available
-  - name: "PrometheusUp"
-    query_tpl: 'up{job="kube-state-metrics"}'
-    operator: "<"
-    threshold: 1
-    weight: 1
+    unit: "bytes"
+
+# LLM Analysis Context
+analysis_context:
+  service_type: "service_mesh_proxy"
+  criticality: "high"
+  common_causes: 
+    - "high_traffic_load"
+    - "resource_limits_exceeded"
+    - "upstream_service_issues"
+    - "circuit_breaker_activation"
+    - "memory_leak_in_proxy"
+    - "misconfiguration"
+  escalation_path: "sre-team → platform-team → on-call-engineer"

@@ -1,111 +1,157 @@
-# Configuration for KubePodNotReady alert
-log_file: /var/log/kubernetes/pods.log
+---
+# Enhanced Service Configuration for Kube Pod Not Ready
 
-# Elasticsearch configuration for Kubernetes logs
-elasticsearch:
-  index_pattern: "logstash-*,logs-*,kubernetes-*"
-  time_range_minutes: 15
-  scan_limit: 1000
-  service_fields: ["kubernetes.pod.name", "kubernetes.container.name", "container.name", "service"]
-  namespace_filter: ""  # Search all namespaces for pod issues
+# Service Metadata
+name: "KubePodNotReady"
+description: "Monitors pod readiness issues across Kubernetes cluster"
+version: "1.1"
+tags: ["kubernetes", "pods", "infrastructure", "availability"]
+maintainer: "platform-team@company.com"
 
-log_patterns:
-  # Pod lifecycle issues
-  - label: "pod_failed_scheduling"
-    regex: "(?i)(failed.*schedul|insufficient.*resources|no.*nodes.*available)"
-  - label: "image_pull_error"
-    regex: "(?i)(image.*pull|failed.*pull|manifest.*unknown|pull.*access.*denied)"
-  - label: "container_crash"
-    regex: "(?i)(container.*exit|crashed|panic|segmentation.*fault)"
-  - label: "resource_exhaustion"
-    regex: "(?i)(out.*of.*memory|oom.*kill|cpu.*throttl|disk.*pressure)"
-  - label: "network_issues"
-    regex: "(?i)(network.*unreachable|dns.*resolution|connection.*refused|timeout)"
-  - label: "volume_mount_error"
-    regex: "(?i)(mount.*fail|volume.*attach|pvc.*bound|storage.*class)"
-  - label: "readiness_probe_failed"
-    regex: "(?i)(readiness.*probe.*fail|health.*check.*fail|probe.*timeout)"
-  - label: "liveness_probe_failed"
-    regex: "(?i)(liveness.*probe.*fail|container.*restart|unhealthy)"
-  - label: "config_error"
-    regex: "(?i)(configmap.*not.*found|secret.*not.*found|invalid.*config)"
-  - label: "permission_denied"
-    regex: "(?i)(permission.*denied|access.*denied|forbidden|unauthorized)"
+# Alert Matching
+alert_pattern: "KubePodNotReady"
+severity_levels: ["warning", "critical"]
 
-metrics:
-  # Pod readiness status (should be 1 for ready pods)
-  - name: "PodReadyStatus"
-    query_tpl: 'kube_pod_status_ready{condition="true"}'
-    operator: "<"
-    threshold: 1
-    weight: 3
+# Data Sources
+data_sources:
+  elasticsearch:
+    index_pattern: "${ES_INDEX_PATTERN:-fluentbit-*}"
+    time_range_minutes: 15
+    scan_limit: 1000
+    namespace_filter: ""  # Monitor all namespaces
+    required_fields: ["@timestamp", "log", "kubernetes.container_name", "kubernetes.namespace_name"]
   
-  # Pod phase (Running = 1, others indicate issues)
-  - name: "PodPhaseRunning"
+  log_file: "/var/log/kubernetes/pods.log"
+
+# Symptom Detection
+log_patterns:
+  - name: "container_startup_failure"
+    description: "Container fails to start"
+    regex: "(?i)(failed.*start.*container|container.*startup.*failed|failed.*create.*container)"
+    severity: "critical"
+    
+  - name: "image_pull_error"
+    description: "Docker image pull failures"
+    regex: "(?i)(failed.*pull.*image|image.*pull.*error|imagepullbackoff|errimagepull)"
+    severity: "critical"
+    
+  - name: "readiness_probe_failure"
+    description: "Readiness probe failures"
+    regex: "(?i)(readiness.*probe.*failed|readiness.*check.*failed)"
+    severity: "warning"
+    
+  - name: "liveness_probe_failure"
+    description: "Liveness probe failures"
+    regex: "(?i)(liveness.*probe.*failed|liveness.*check.*failed)"
+    severity: "critical"
+    
+  - name: "resource_quota_exceeded"
+    description: "Resource quota or limits exceeded"
+    regex: "(?i)(resource.*quota.*exceeded|insufficient.*resources|resource.*limit.*exceeded)"
+    severity: "critical"
+    
+  - name: "volume_mount_error"
+    description: "Volume mounting failures"
+    regex: "(?i)(failed.*mount.*volume|volume.*mount.*error|unable.*mount)"
+    severity: "critical"
+    
+  - name: "config_map_error"
+    description: "ConfigMap or Secret mounting issues"
+    regex: "(?i)(configmap.*not.*found|secret.*not.*found|failed.*mount.*configmap)"
+    severity: "warning"
+    
+  - name: "dns_resolution_failure"
+    description: "DNS resolution failures in pods"
+    regex: "(?i)(dns.*resolution.*failed|name.*resolution.*error|no.*such.*host)"
+    severity: "warning"
+    
+  - name: "network_policy_blocked"
+    description: "Network policy blocking connections"
+    regex: "(?i)(network.*policy.*denied|connection.*blocked.*policy)"
+    severity: "warning"
+    
+  - name: "oom_killed"
+    description: "Out of memory kills"
+    regex: "(?i)(oom.*killed|out.*of.*memory|memory.*limit.*exceeded)"
+    severity: "critical"
+
+# Metrics Monitoring
+metrics:
+  - name: "PodsNotReady"
+    description: "Number of pods not in ready state"
+    query_tpl: 'kube_pod_status_ready{condition="false"}'
+    operator: ">"
+    threshold: 0
+    weight: 8
+    unit: "count"
+    
+  - name: "PodsPullingImages"
+    description: "Pods stuck pulling images"
+    query_tpl: 'kube_pod_container_status_waiting_reason{reason="ImagePullBackOff"}'
+    operator: ">"
+    threshold: 0
+    weight: 7
+    unit: "count"
+    
+  - name: "PodsContainerCreating"
+    description: "Pods stuck in container creating state"
+    query_tpl: 'kube_pod_container_status_waiting_reason{reason="ContainerCreating"}'
+    operator: ">"
+    threshold: 2
+    weight: 6
+    unit: "count"
+    
+  - name: "PodsCrashLooping"
+    description: "Pods in crash loop backoff"
+    query_tpl: 'kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"}'
+    operator: ">"
+    threshold: 0
+    weight: 9
+    unit: "count"
+    
+  - name: "PodsRunning"
+    description: "Total pods in running state"
     query_tpl: 'kube_pod_status_phase{phase="Running"}'
     operator: "<"
-    threshold: 1
+    threshold: 5
     weight: 3
+    unit: "count"
     
-  # Container ready count vs desired
-  - name: "ContainerReadyRatio"
-    query_tpl: 'kube_pod_status_ready{condition="true"} / kube_pod_info'
-    operator: "<"
-    threshold: 1
-    weight: 2
-    
-  # Pod restarts (high restart count indicates issues)
-  - name: "PodRestartCount"
-    query_tpl: 'kube_pod_container_status_restarts_total'
+  - name: "PodsPending"
+    description: "Pods stuck in pending state"
+    query_tpl: 'kube_pod_status_phase{phase="Pending"}'
     operator: ">"
     threshold: 5
+    weight: 5
+    unit: "count"
+    
+  - name: "NodeCapacityPods"
+    description: "Node pod capacity utilization"
+    query_tpl: 'kube_node_status_capacity{resource="pods"}'
+    operator: "<"
+    threshold: 10
     weight: 2
+    unit: "count"
     
-  # Container waiting state (should be 0 for healthy pods)
-  - name: "ContainerWaiting"
-    query_tpl: 'kube_pod_container_status_waiting'
-    operator: ">"
-    threshold: 0
-    weight: 3
-    
-  # Container terminated state
-  - name: "ContainerTerminated"
-    query_tpl: 'kube_pod_container_status_terminated'
-    operator: ">"
-    threshold: 0
-    weight: 3
-    
-  # Memory usage vs requests
-  - name: "MemoryUsageVsRequests"
-    query_tpl: 'container_memory_usage_bytes / container_spec_memory_limit_bytes'
-    operator: ">"
-    threshold: 0.9
-    weight: 2
-    
-  # CPU usage vs requests
-  - name: "CPUUsageVsRequests"
-    query_tpl: 'rate(container_cpu_usage_seconds_total[5m]) / container_spec_cpu_quota * container_spec_cpu_period'
-    operator: ">"
-    threshold: 0.9
-    weight: 2
-    
-  # Node resource pressure
-  - name: "NodeMemoryPressure"
-    query_tpl: 'kube_node_status_condition{condition="MemoryPressure",status="true"}'
-    operator: ">"
-    threshold: 0
-    weight: 2
-    
-  # Node disk pressure
-  - name: "NodeDiskPressure"
-    query_tpl: 'kube_node_status_condition{condition="DiskPressure",status="true"}'
-    operator: ">"
-    threshold: 0
-    weight: 2
-    
-  # Available nodes for scheduling
-  - name: "NodesReady"
-    query_tpl: 'kube_node_status_condition{condition="Ready",status="true"}'
+  - name: "PersistentVolumesClaimed"
+    description: "PVC availability check"
+    query_tpl: 'kube_persistentvolumeclaim_status_phase{phase="Bound"}'
     operator: "<"
     threshold: 1
-    weight: 3
+    weight: 4
+    unit: "count"
+
+# LLM Analysis Context
+analysis_context:
+  service_type: "kubernetes_workload"
+  criticality: "high"
+  common_causes:
+    - "image_pull_failures"
+    - "resource_constraints"
+    - "readiness_probe_failures"
+    - "volume_mounting_issues"
+    - "network_connectivity_problems"
+    - "node_resource_exhaustion"
+    - "misconfigured_deployments"
+    - "dependency_unavailability"
+  escalation_path: "sre-team → platform-team → application-team"

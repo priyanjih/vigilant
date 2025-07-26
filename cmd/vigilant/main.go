@@ -145,12 +145,21 @@ func main() {
 	// Create service mapping from loaded profiles
 	serviceMapping := logs.NewServiceMapping(profiles)
 	
-	// Create map of valid services for alert filtering
+	// Create alert pattern to service name mapping
+	alertToServiceMapping := config.CreateAlertToServiceMapping(profiles)
+	
+	// Create map of valid services for alert filtering (using alert patterns)
 	validServices := make(map[string]bool)
+	for alertPattern := range alertToServiceMapping {
+		validServices[alertPattern] = true
+	}
+	
+	// Also add service names themselves for backward compatibility
 	for serviceName := range profiles {
 		validServices[serviceName] = true
 	}
-	fmt.Printf("Loaded %d service configurations: %v\n", len(validServices), getServiceNames(validServices))
+	
+	fmt.Printf("Loaded %d service configurations: %v\n", len(profiles), getServiceNames(profiles))
 	
 	// Debug: Check what alerts are available from Prometheus
 	fmt.Println("DEBUG: Checking available alerts from Prometheus...")
@@ -228,47 +237,67 @@ func main() {
 		}
 
 		for _, item := range tracker.Items {
-			// Try to match alert name to profile name first, then fall back to service name
-			profileKey := item.AlertName
-			if _, ok := profiles[profileKey]; !ok {
-				profileKey = item.Service
+			// Use new alert-to-service mapping
+			var serviceName string
+			var ok bool
+			
+			// First try direct alert pattern mapping
+			if serviceName, ok = alertToServiceMapping[item.AlertName]; ok {
+				// Found via alert pattern
+			} else if serviceName, ok = alertToServiceMapping[item.Service]; ok {
+				// Found via service field
+			} else {
+				// Last resort: try direct profile lookup for backward compatibility
+				if _, exists := profiles[item.AlertName]; exists {
+					serviceName = item.AlertName
+				} else if _, exists := profiles[item.Service]; exists {
+					serviceName = item.Service
+				} else {
+					fmt.Printf("No profile found for alert '%s' or service '%s'\n", item.AlertName, item.Service)
+					continue
+				}
 			}
 			
-			if seen[profileKey] {
+			if seen[serviceName] {
 				continue
 			}
-			seen[profileKey] = true
+			seen[serviceName] = true
 
-			profile, ok := profiles[profileKey]
+			profile, ok := profiles[serviceName]
 			if !ok {
-				fmt.Printf("No profile found for alert '%s' or service '%s'\n", item.AlertName, item.Service)
+				fmt.Printf("No profile found for service '%s'\n", serviceName)
 				continue
 			}
 			
-			// Use the profile key as the service name for processing
-			service := profileKey
+			// Use the resolved service name for processing
+			service := serviceName
 
 			// Logs - Use Elasticsearch if available, otherwise fall back to file-based
 			var symptoms []logs.SymptomMatch
 			if esClient != nil {
-				// Get service-specific ES configuration or use defaults
-				indexPattern := profile.Elasticsearch.IndexPattern
+				// Get service-specific ES configuration using new accessor
+				esConfig := profile.GetEffectiveElasticsearchConfig()
+				
+				indexPattern := esConfig.IndexPattern
 				if indexPattern == "" {
 					indexPattern = defaultESIndexPattern
 				}
 				
-				scanLimit := profile.Elasticsearch.ScanLimit
+				scanLimit := esConfig.ScanLimit
 				if scanLimit == 0 {
 					scanLimit = 500 // default
 				}
 				
-				timeRangeMin := profile.Elasticsearch.TimeRangeMin
+				timeRangeMin := esConfig.TimeRangeMinutes
+				if timeRangeMin == 0 && esConfig.TimeRangeMin > 0 {
+					timeRangeMin = esConfig.TimeRangeMin // backward compatibility
+				}
 				if timeRangeMin == 0 {
 					timeRangeMin = 10 // default
 				}
 				timeRange := time.Duration(timeRangeMin) * time.Minute
 				
-				namespaceFilter := profile.Elasticsearch.NamespaceFilter
+				namespaceFilter := esConfig.NamespaceFilter
 				
 				fmt.Printf("ES scan for %s: index=%s, limit=%d, time=%dmin, namespace=%s\n", 
 					service, indexPattern, scanLimit, timeRangeMin, namespaceFilter)
@@ -287,8 +316,9 @@ func main() {
 					fmt.Println("Attempting fallback to file-based scanning...")
 					
 					// Fallback to file-based if ES fails
-					if profile.LogFile != "" {
-						symptoms, err = logs.ScanLogsAndMatchSymptoms(profile.LogFile, scanLimit, profile.LogPatterns)
+					logFile := profile.GetEffectiveLogFile()
+					if logFile != "" {
+						symptoms, err = logs.ScanLogsAndMatchSymptoms(logFile, scanLimit, profile.LogPatterns)
 						if err != nil {
 							fmt.Printf("File-based fallback also failed for %s: %v\n", service, err)
 						}
@@ -296,12 +326,14 @@ func main() {
 				}
 			} else {
 				// Use file-based scanning
-				if profile.LogFile != "" {
-					scanLimit := profile.Elasticsearch.ScanLimit
+				logFile := profile.GetEffectiveLogFile()
+				if logFile != "" {
+					esConfig := profile.GetEffectiveElasticsearchConfig()
+					scanLimit := esConfig.ScanLimit
 					if scanLimit == 0 {
 						scanLimit = 500 // default
 					}
-					symptoms, err = logs.ScanLogsAndMatchSymptoms(profile.LogFile, scanLimit, profile.LogPatterns)
+					symptoms, err = logs.ScanLogsAndMatchSymptoms(logFile, scanLimit, profile.LogPatterns)
 					if err != nil {
 						fmt.Printf("Error scanning file logs for %s: %v\n", service, err)
 					}
@@ -330,9 +362,10 @@ func main() {
 			}
 			currentSymptomCount += len(serviceSymptoms)
 
-			// Metrics
+			// Metrics - Use new accessor method
 			var checks []prometheus.MetricCheck
-			for _, check := range profile.Metrics {
+			effectiveMetrics := profile.GetEffectiveMetrics()
+			for _, check := range effectiveMetrics {
 				cloned := check
 				cloned.QueryTpl = prometheus.RenderQuery(cloned.QueryTpl, map[string]string{
 					"Service": service,
@@ -515,10 +548,10 @@ func main() {
 	}
 }
 
-// getServiceNames extracts service names from validServices map for logging
-func getServiceNames(validServices map[string]bool) []string {
+// getServiceNames extracts service names from profiles map for logging
+func getServiceNames(profiles map[string]config.ServiceProfile) []string {
 	var names []string
-	for name := range validServices {
+	for name := range profiles {
 		names = append(names, name)
 	}
 	return names

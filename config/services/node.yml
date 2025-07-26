@@ -1,47 +1,97 @@
-log_file: /var/log/syslog
-log_patterns:
-  # System patterns that will trigger frequently
-  - label: "systemd_service"
-    regex: "systemd\\[1\\]: Starting"
-  - label: "systemd_finished"
-    regex: "systemd\\[1\\]: Finished"
-  - label: "kernel_warning"
-    regex: "kernel:.*hogged CPU"
-  - label: "cron_job"
-    regex: "CRON\\[\\d+\\]:"
-  - label: "network_change"
-    regex: "avahi-daemon.*address record"
-  # Error patterns for monitoring
-  - label: "authentication_failure"
-    regex: "authentication failure"
-  - label: "sudo_failure"
-    regex: "sudo:.*authentication failure"
-  - label: "ssh_failure"
-    regex: "sshd.*Failed password"
-  - label: "disk_error"
-    regex: "(?i)disk.*error|I/O error"
-  - label: "out_of_memory"
-    regex: "Out of memory|OOM"
-  - label: "segfault"
-    regex: "segfault"
-  - label: "kernel_panic"
-    regex: "kernel panic"
-  - label: "service_failed"
-    regex: "systemd\\[1\\]:.*failed"
+---
+# Enhanced Service Configuration for Node/System Monitoring
 
+# Service Metadata
+name: "node"
+description: "System-level monitoring for Linux nodes and infrastructure"
+version: "1.0"
+tags: ["infrastructure", "system", "node", "linux"]
+maintainer: "infrastructure-team@company.com"
+
+# Alert Matching
+alert_pattern: "node"
+severity_levels: ["warning", "critical"]
+
+# Data Sources
+data_sources:
+  elasticsearch:
+    index_pattern: "${ES_INDEX_PATTERN:-fluentbit-*}"
+    time_range_minutes: 20
+    scan_limit: 1000
+    namespace_filter: "kube-system"
+    required_fields: ["@timestamp", "log", "kubernetes.container_name"]
+  
+  log_file: "/var/log/syslog"
+
+# Symptom Detection
+log_patterns:
+  - name: "systemd_service_restart"
+    description: "SystemD service restarts"
+    regex: "systemd\\[1\\]: Starting"
+    severity: "warning"
+    
+  - name: "kernel_error"
+    description: "Kernel error messages"
+    regex: "(?i)kernel.*error|kernel.*panic|oops"
+    severity: "critical"
+    
+  - name: "disk_full"
+    description: "Disk space warnings"
+    regex: "(?i)no space left|disk.*full|filesystem.*full"
+    severity: "critical"
+    
+  - name: "oom_killer"
+    description: "Out of memory killer events"
+    regex: "(?i)out of memory|oom-kill|killed process"
+    severity: "critical"
+    
+  - name: "network_interface_down"
+    description: "Network interface down events"
+    regex: "(?i)link.*down|interface.*down|network.*unreachable"
+    severity: "warning"
+
+# Metrics Monitoring
 metrics:
-  - name: "RAMUsage"
-    query_tpl: "node_memory_Active_bytes"
-    operator: ">"
-    threshold: 4.5e+9
-    weight: 2
-  - name: "DiskUsage"
-    query_tpl: "node_filesystem_avail_bytes{mountpoint='/'}"
+  - name: "NodeUp"
+    description: "Node exporter availability"
+    query_tpl: 'up{job="node-exporter"}'
     operator: "<"
-    threshold: 1e+12  # 1TB - almost guaranteed to trigger
-    weight: 2
-  - name: "CPUUsage" 
-    query_tpl: "100 - (avg(rate(node_cpu_seconds_total{mode='idle'}[1m])) * 100)"
+    threshold: 1
+    weight: 10
+    unit: "boolean"
+    
+  - name: "NodeCPUUsage"
+    description: "Node CPU utilization percentage"
+    query_tpl: '100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)'
     operator: ">"
-    threshold: 0.1  # 0.1% CPU - should trigger with any activity
-    weight: 1
+    threshold: 85.0
+    weight: 7
+    unit: "percentage"
+    
+  - name: "NodeMemoryUsage"
+    description: "Node memory utilization percentage"
+    query_tpl: '(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100'
+    operator: ">"
+    threshold: 90.0
+    weight: 8
+    unit: "percentage"
+    
+  - name: "NodeDiskUsage"
+    description: "Node disk utilization percentage"
+    query_tpl: '100 - ((node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100)'
+    operator: ">"
+    threshold: 85.0
+    weight: 6
+    unit: "percentage"
+
+# LLM Analysis Context
+analysis_context:
+  service_type: "infrastructure_node"
+  criticality: "high"
+  common_causes:
+    - "resource_exhaustion"
+    - "hardware_failure"
+    - "kernel_issues"
+    - "network_connectivity_problems"
+    - "disk_space_issues"
+  escalation_path: "infrastructure-team → system-admin → hardware-team"

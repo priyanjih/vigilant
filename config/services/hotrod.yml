@@ -1,22 +1,93 @@
-log_file: /home/priyanjith/copilot-stack/hotrod.log
+---
+# Enhanced Service Configuration for HotROD Demo Application
 
+# Service Metadata
+name: "hotrod"
+description: "HotROD demo application monitoring for Jaeger tracing examples"
+version: "1.0"
+tags: ["demo", "application", "tracing", "jaeger"]
+maintainer: "demo-team@company.com"
+
+# Alert Matching
+alert_pattern: "hotrod"
+severity_levels: ["warning", "critical"]
+
+# Data Sources
+data_sources:
+  elasticsearch:
+    index_pattern: "${ES_INDEX_PATTERN:-fluentbit-*}"
+    time_range_minutes: 10
+    scan_limit: 500
+    namespace_filter: "${HOTROD_NAMESPACE:-demo}"
+    required_fields: ["@timestamp", "log", "kubernetes.container_name"]
+  
+  log_file: "/home/priyanjith/copilot-stack/hotrod.log"
+
+# Symptom Detection
 log_patterns:
-  - label: timeout
+  - name: "timeout_error"
+    description: "Request timeout errors"
     regex: "(?i)timeout"
-  - label: panic
+    severity: "warning"
+    
+  - name: "panic_error"
+    description: "Application panic events"
     regex: "(?i)panic"
-  - label: 5xx
+    severity: "critical"
+    
+  - name: "http_5xx_errors"
+    description: "HTTP 5xx server errors"
     regex: "(?i)5\\d\\d"
-  - label: unavailable
+    severity: "critical"
+    
+  - name: "service_unavailable"
+    description: "Service unavailability errors"
     regex: "(?i)unavailable"
-  - label: connection_refused
+    severity: "critical"
+    
+  - name: "connection_refused"
+    description: "Connection refused errors"
     regex: "(?i)connection refused"
-  - label: trace_export_fail
+    severity: "warning"
+    
+  - name: "trace_export_failure"
+    description: "Trace export connectivity issues"
     regex: "(?i)traces export.*connect"
+    severity: "warning"
 
+# Metrics Monitoring
 metrics:
-  - name: HotrodTraffic
-    query_tpl: sum(hotrod_http_requests_total)
+  - name: "HotrodTraffic"
+    description: "HTTP request traffic volume"
+    query_tpl: 'sum(hotrod_http_requests_total)'
     operator: ">"
     threshold: 30
     weight: 1
+    unit: "requests"
+    
+  - name: "HotrodLatency"
+    description: "HTTP request latency P99"
+    query_tpl: 'histogram_quantile(0.99, sum(rate(hotrod_http_request_duration_seconds_bucket[5m])) by (le))'
+    operator: ">"
+    threshold: 2.0
+    weight: 3
+    unit: "seconds"
+    
+  - name: "HotrodErrorRate"
+    description: "HTTP error rate percentage"
+    query_tpl: 'sum(rate(hotrod_http_requests_total{status=~"5.."}[5m])) / sum(rate(hotrod_http_requests_total[5m])) * 100'
+    operator: ">"
+    threshold: 5.0
+    weight: 5
+    unit: "percentage"
+
+# LLM Analysis Context
+analysis_context:
+  service_type: "demo_application"
+  criticality: "low"
+  common_causes:
+    - "demo_environment_instability"
+    - "tracing_backend_issues"
+    - "resource_constraints"
+    - "network_connectivity_issues"
+  escalation_path: "demo-team"

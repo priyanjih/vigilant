@@ -1,0 +1,175 @@
+---
+# Enhanced Service Configuration for KubeDaemonSetRolloutStuck
+
+# Service Metadata
+name: "KubeDaemonSetRolloutStuck"
+description: "Monitors DaemonSet rollout issues, pod scheduling problems, and node compatibility issues"
+version: "1.0"
+tags: ["kubernetes", "daemonset", "rollout", "infrastructure", "scheduling"]
+maintainer: "platform-team@company.com"
+
+# Alert Matching
+alert_pattern: "KubeDaemonSetRolloutStuck"
+severity_levels: ["warning", "critical"]
+
+# Data Sources
+data_sources:
+  elasticsearch:
+    index_pattern: "${ES_INDEX_PATTERN:-fluentbit-*}"
+    time_range_minutes: 30
+    scan_limit: 1000
+    namespace_filter: "kube-system"
+    required_fields: ["@timestamp", "log", "kubernetes.container_name", "kubernetes.namespace_name"]
+  
+  log_file: "/var/log/kubernetes/kube-controller-manager.log"
+
+# Symptom Detection
+log_patterns:
+  - name: "daemonset_rollout_timeout"
+    description: "DaemonSet rollout exceeding timeout limits"
+    regex: "(?i)(daemonset.*rollout.*timeout|rollout.*stuck|rollout.*progress.*deadline)"
+    severity: "critical"
+    
+  - name: "pod_scheduling_failure"
+    description: "Pod scheduling failures on nodes"
+    regex: "(?i)(failed.*schedule.*pod|no.*nodes.*available|insufficient.*resources)"
+    severity: "critical"
+    
+  - name: "node_affinity_mismatch"
+    description: "Node affinity or selector issues"
+    regex: "(?i)(node.*affinity.*mismatch|node.*selector.*failed|no.*matching.*nodes)"
+    severity: "warning"
+    
+  - name: "resource_quota_exceeded"
+    description: "Resource quota limits preventing pod creation"
+    regex: "(?i)(resource.*quota.*exceeded|limit.*range.*violation|insufficient.*cpu|insufficient.*memory)"
+    severity: "critical"
+    
+  - name: "image_pull_errors"
+    description: "Container image pull failures"
+    regex: "(?i)(failed.*pull.*image|image.*pull.*error|imagepullbackoff|errimagepull)"
+    severity: "critical"
+    
+  - name: "volume_mount_failure"
+    description: "Volume mounting issues for DaemonSet pods"
+    regex: "(?i)(failed.*mount.*volume|volume.*attach.*error|persistent.*volume.*error)"
+    severity: "critical"
+    
+  - name: "security_context_violation"
+    description: "Security policy violations"
+    regex: "(?i)(security.*context.*violation|pod.*security.*policy|privileged.*container.*denied)"
+    severity: "warning"
+    
+  - name: "node_taints_rejection"
+    description: "Node taints preventing pod scheduling"
+    regex: "(?i)(node.*taint|taint.*toleration|pod.*rejected.*taint)"
+    severity: "warning"
+    
+  - name: "controller_manager_error"
+    description: "Controller manager errors affecting DaemonSets"
+    regex: "(?i)(controller.*manager.*error|daemonset.*controller.*error|failed.*sync.*daemonset)"
+    severity: "critical"
+    
+  - name: "api_server_timeout"
+    description: "API server communication timeouts"
+    regex: "(?i)(api.*server.*timeout|connection.*timeout.*api|client.*rate.*limiter)"
+    severity: "warning"
+
+# Metrics Monitoring
+metrics:
+  - name: "DaemonSetDesiredNodes"
+    description: "Number of nodes that should run DaemonSet pods"
+    query_tpl: 'kube_daemonset_status_desired_number_scheduled'
+    operator: ">"
+    threshold: 0
+    weight: 5
+    unit: "count"
+    
+  - name: "DaemonSetCurrentReady"
+    description: "Number of nodes running ready DaemonSet pods"
+    query_tpl: 'kube_daemonset_status_number_ready'
+    operator: "<"
+    threshold: 1
+    weight: 8
+    unit: "count"
+    
+  - name: "DaemonSetUnavailable"
+    description: "Number of nodes with unavailable DaemonSet pods"
+    query_tpl: 'kube_daemonset_status_number_unavailable'
+    operator: ">"
+    threshold: 0
+    weight: 9
+    unit: "count"
+    
+  - name: "DaemonSetMisscheduled"
+    description: "Number of misscheduled DaemonSet pods"
+    query_tpl: 'kube_daemonset_status_number_misscheduled'
+    operator: ">"
+    threshold: 0
+    weight: 7
+    unit: "count"
+    
+  - name: "DaemonSetReadyRatio"
+    description: "Percentage of DaemonSet pods in ready state"
+    query_tpl: '(kube_daemonset_status_number_ready / kube_daemonset_status_desired_number_scheduled) * 100'
+    operator: "<"
+    threshold: 95.0
+    weight: 10
+    unit: "percentage"
+    
+  - name: "NodeNotReady"
+    description: "Number of nodes not in ready state"
+    query_tpl: 'kube_node_status_condition{condition="Ready",status="false"}'
+    operator: ">"
+    threshold: 0
+    weight: 6
+    unit: "count"
+    
+  - name: "PodsPending"
+    description: "Number of pods stuck in pending state"
+    query_tpl: 'kube_pod_status_phase{phase="Pending",namespace="kube-system"}'
+    operator: ">"
+    threshold: 5
+    weight: 7
+    unit: "count"
+    
+  - name: "NodeResourcePressure"
+    description: "Nodes under resource pressure"
+    query_tpl: 'kube_node_status_condition{condition=~"MemoryPressure|DiskPressure|PIDPressure",status="true"}'
+    operator: ">"
+    threshold: 0
+    weight: 5
+    unit: "count"
+    
+  - name: "SchedulerFailures"
+    description: "Scheduler failure events per minute"
+    query_tpl: 'rate(scheduler_schedule_attempts_total{result="error"}[5m]) * 60'
+    operator: ">"
+    threshold: 5.0
+    weight: 6
+    unit: "per_minute"
+    
+  - name: "DaemonSetGeneration"
+    description: "DaemonSet generation lag indicator"
+    query_tpl: 'kube_daemonset_status_observed_generation != kube_daemonset_metadata_generation'
+    operator: ">"
+    threshold: 0
+    weight: 4
+    unit: "boolean"
+
+# LLM Analysis Context
+analysis_context:
+  service_type: "kubernetes_daemonset"
+  criticality: "high"
+  common_causes:
+    - "node_resource_constraints"
+    - "node_affinity_misconfigurations"
+    - "image_pull_failures"
+    - "persistent_volume_issues"
+    - "security_policy_violations"
+    - "node_taints_incompatibility"
+    - "api_server_connectivity_issues"
+    - "controller_manager_failures"
+    - "network_policy_restrictions"
+    - "scheduler_bottlenecks"
+  escalation_path: "platform-team → kubernetes-sre → cluster-admin"

@@ -1,0 +1,56 @@
+---
+# Enhanced Service Configuration for MyAPI
+
+# Service Metadata
+name: "MyAPI"
+description: "REST API service monitoring"
+version: "1.0"
+tags: ["api", "microservice", "production"]
+maintainer: "sre-team@company.com"
+
+# Alert Matching
+alert_pattern: "MyAPI"
+severity_levels: ["warning", "critical"]
+
+# Data Sources
+data_sources:
+  elasticsearch:
+    index_pattern: "${ES_INDEX_PATTERN:-fluentbit-*}"
+    time_range_minutes: 15
+    scan_limit: 500
+    namespace_filter: "production"
+    required_fields: ["@timestamp", "log", "kubernetes.container_name", "kubernetes.namespace_name"]
+  
+  log_file: "/var/log/myapi.log"  # Fallback
+  
+# Symptom Detection
+log_patterns:
+  - name: "error_pattern"
+    description: "Generic error detection"
+    regex: "(?i)error|exception|failed|failure"
+    severity: "warning"
+    
+  - name: "critical_error"
+    description: "Critical system errors"
+    regex: "(?i)panic|fatal|critical|segmentation.*fault"
+    severity: "critical"
+
+# Metrics Monitoring  
+metrics:
+  - name: "ServiceAvailability"
+    description: "Service availability check"
+    query_tpl: 'up{job="MyAPI"}'
+    operator: "<"
+    threshold: 1.0
+    weight: 10
+    unit: "boolean"
+
+# LLM Analysis Context
+analysis_context:
+  service_type: "microservice"
+  criticality: "high"
+  common_causes: 
+    - "resource_constraints"
+    - "network_issues" 
+    - "configuration_errors"
+  escalation_path: "sre-team"

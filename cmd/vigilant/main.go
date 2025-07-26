@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -54,21 +55,34 @@ func (s *StateSnapshot) ShouldForceUpdate(maxAge time.Duration) bool {
 }
 
 func main() {
+	// Parse command line flags
+	enableLLM := flag.Bool("llm", true, "Enable LLM processing for root cause analysis")
+	flag.Parse()
+	
+	// Check environment variable override
+	if envLLM := os.Getenv("ENABLE_LLM"); envLLM != "" {
+		if envLLM == "false" || envLLM == "0" {
+			*enableLLM = false
+		}
+	}
+	
 	fmt.Println("Starting Vigilant...")
+	fmt.Printf("LLM Processing: %v\n", *enableLLM)
+	
 	if err := godotenv.Load(".env"); err != nil {
 		fmt.Println("Warning: .env file not found or failed to load.")
 	}
 
 	promURL := os.Getenv("PROM_URL")
 	if promURL == "" {
-		promURL = "http://localhost:9090"
+		promURL = "http://prometheus.local:8080"
 		fmt.Println("PROM_URL not set in env, using default:", promURL)
 	}
 
 	// Initialize Elasticsearch client
 	esURLs := []string{os.Getenv("ELASTICSEARCH_URL")}
 	if esURLs[0] == "" {
-		esURLs = []string{"http://localhost:9200"}
+		esURLs = []string{"http://elastic.local:8080/"}
 		fmt.Println("ELASTICSEARCH_URL not set in env, using default:", esURLs[0])
 	}
 
@@ -140,7 +154,7 @@ func main() {
 	
 	// Debug: Check what alerts are available from Prometheus
 	fmt.Println("DEBUG: Checking available alerts from Prometheus...")
-	allAlerts, err := prometheus.FetchAlerts(promURL, make(map[string]bool)) // Get all alerts
+	allAlerts, err := prometheus.FetchAlerts(promURL, validServices) // Use proper validServices
 	if err != nil {
 		fmt.Printf("DEBUG: Error fetching all alerts: %v\n", err)
 	} else {
@@ -380,8 +394,8 @@ func main() {
 			LastLLMUpdate: lastState.LastLLMUpdate,
 		}
 
-		// Smart LLM decision: only process if we have correlations and changes detected
-		shouldCallLLM := len(correlations) > 0 && currentState.HasChanged(lastState)
+		// Smart LLM decision: only process if we have correlations, changes detected, AND LLM is enabled
+		shouldCallLLM := *enableLLM && len(correlations) > 0 && currentState.HasChanged(lastState)
 
 		if currentState.HasChanged(lastState) {
 			fmt.Printf("Changes detected:\n")
@@ -396,8 +410,8 @@ func main() {
 				hashutil.SafeHashDisplay(lastState.MetricsHash), hashutil.SafeHashDisplay(currentState.MetricsHash))
 		}
 
-		// Handle forced updates only if we have active alerts and significant time has passed
-		if len(correlations) > 0 && !shouldCallLLM && currentState.ShouldForceUpdate(maxLLMUpdateAge) {
+		// Handle forced updates only if we have active alerts, significant time has passed, AND LLM is enabled
+		if *enableLLM && len(correlations) > 0 && !shouldCallLLM && currentState.ShouldForceUpdate(maxLLMUpdateAge) {
 			fmt.Printf("Forcing LLM update - last update was %v ago with %d active alerts\n", 
 				time.Since(lastState.LastLLMUpdate), len(correlations))
 			shouldCallLLM = true
@@ -454,7 +468,9 @@ func main() {
 			currentState.LastLLMUpdate = time.Now()
 			lastState = currentState
 		} else {
-			if len(correlations) == 0 {
+			if !*enableLLM {
+				fmt.Println("LLM processing disabled. Skipping AI analysis.")
+			} else if len(correlations) == 0 {
 				fmt.Println("No active alerts. Skipping LLM processing.")
 			} else {
 				fmt.Println("No significant changes detected. Using cached LLM data.")

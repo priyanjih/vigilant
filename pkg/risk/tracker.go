@@ -28,7 +28,7 @@ func (rt *RiskTracker) UpdateFromAlerts(alerts []prometheus.Alert) {
 	now := time.Now()
 
 	for _, a := range alerts {
-		key := a.Instance // or a.Name+a.Instance if multiple alerts per service
+		key := a.Name + "|" + a.Instance // Unique key combining alert name and instance
 
 		if item, exists := rt.Items[key]; exists {
 			item.LastSeen = now

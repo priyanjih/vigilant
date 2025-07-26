@@ -61,8 +61,8 @@ func FetchAlerts(promURL string, validServices map[string]bool) ([]Alert, error)
 				StartsAt: a.StartsAt,
 			}
 			
-			// Only include alerts for services that have configurations
-			if len(validServices) == 0 || validServices[alert.Service] {
+			// Only include alerts that match configured service files
+			if len(validServices) == 0 || validServices[alert.Name] {
 				alerts = append(alerts, alert)
 			}
 		}
@@ -82,20 +82,11 @@ func getLabel(labels map[string]string, key string) string {
 func extractServiceFromLabels(labels map[string]string, validServices map[string]bool) string {
 	alertname := getLabel(labels, "alertname")
 	
-	// Strategy 1: Exact alertname match with configured services (case-sensitive)
+	// Simple logic: if alertname matches a service filename, use it
 	if validServices[alertname] {
 		return alertname
 	}
 	
-	// Strategy 2: Case-insensitive exact alertname match
-	for serviceName := range validServices {
-		if strings.EqualFold(alertname, serviceName) {
-			return serviceName
-		}
-	}
-	
-	// If no exact match found, return unknown
-	// This ensures clean service mapping without ambiguous partial matches
 	return "unknown"
 }
 

@@ -1,0 +1,111 @@
+# Configuration for KubePodNotReady alert
+log_file: /var/log/kubernetes/pods.log
+
+# Elasticsearch configuration for Kubernetes logs
+elasticsearch:
+  index_pattern: "logstash-*,logs-*,kubernetes-*"
+  time_range_minutes: 15
+  scan_limit: 1000
+  service_fields: ["kubernetes.pod.name", "kubernetes.container.name", "container.name", "service"]
+  namespace_filter: ""  # Search all namespaces for pod issues
+
+log_patterns:
+  # Pod lifecycle issues
+  - label: "pod_failed_scheduling"
+    regex: "(?i)(failed.*schedul|insufficient.*resources|no.*nodes.*available)"
+  - label: "image_pull_error"
+    regex: "(?i)(image.*pull|failed.*pull|manifest.*unknown|pull.*access.*denied)"
+  - label: "container_crash"
+    regex: "(?i)(container.*exit|crashed|panic|segmentation.*fault)"
+  - label: "resource_exhaustion"
+    regex: "(?i)(out.*of.*memory|oom.*kill|cpu.*throttl|disk.*pressure)"
+  - label: "network_issues"
+    regex: "(?i)(network.*unreachable|dns.*resolution|connection.*refused|timeout)"
+  - label: "volume_mount_error"
+    regex: "(?i)(mount.*fail|volume.*attach|pvc.*bound|storage.*class)"
+  - label: "readiness_probe_failed"
+    regex: "(?i)(readiness.*probe.*fail|health.*check.*fail|probe.*timeout)"
+  - label: "liveness_probe_failed"
+    regex: "(?i)(liveness.*probe.*fail|container.*restart|unhealthy)"
+  - label: "config_error"
+    regex: "(?i)(configmap.*not.*found|secret.*not.*found|invalid.*config)"
+  - label: "permission_denied"
+    regex: "(?i)(permission.*denied|access.*denied|forbidden|unauthorized)"
+
+metrics:
+  # Pod readiness status (should be 1 for ready pods)
+  - name: "PodReadyStatus"
+    query_tpl: 'kube_pod_status_ready{condition="true"}'
+    operator: "<"
+    threshold: 1
+    weight: 3
+  
+  # Pod phase (Running = 1, others indicate issues)
+  - name: "PodPhaseRunning"
+    query_tpl: 'kube_pod_status_phase{phase="Running"}'
+    operator: "<"
+    threshold: 1
+    weight: 3
+    
+  # Container ready count vs desired
+  - name: "ContainerReadyRatio"
+    query_tpl: 'kube_pod_status_ready{condition="true"} / kube_pod_info'
+    operator: "<"
+    threshold: 1
+    weight: 2
+    
+  # Pod restarts (high restart count indicates issues)
+  - name: "PodRestartCount"
+    query_tpl: 'kube_pod_container_status_restarts_total'
+    operator: ">"
+    threshold: 5
+    weight: 2
+    
+  # Container waiting state (should be 0 for healthy pods)
+  - name: "ContainerWaiting"
+    query_tpl: 'kube_pod_container_status_waiting'
+    operator: ">"
+    threshold: 0
+    weight: 3
+    
+  # Container terminated state
+  - name: "ContainerTerminated"
+    query_tpl: 'kube_pod_container_status_terminated'
+    operator: ">"
+    threshold: 0
+    weight: 3
+    
+  # Memory usage vs requests
+  - name: "MemoryUsageVsRequests"
+    query_tpl: 'container_memory_usage_bytes / container_spec_memory_limit_bytes'
+    operator: ">"
+    threshold: 0.9
+    weight: 2
+    
+  # CPU usage vs requests
+  - name: "CPUUsageVsRequests"
+    query_tpl: 'rate(container_cpu_usage_seconds_total[5m]) / container_spec_cpu_quota * container_spec_cpu_period'
+    operator: ">"
+    threshold: 0.9
+    weight: 2
+    
+  # Node resource pressure
+  - name: "NodeMemoryPressure"
+    query_tpl: 'kube_node_status_condition{condition="MemoryPressure",status="true"}'
+    operator: ">"
+    threshold: 0
+    weight: 2
+    
+  # Node disk pressure
+  - name: "NodeDiskPressure"
+    query_tpl: 'kube_node_status_condition{condition="DiskPressure",status="true"}'
+    operator: ">"
+    threshold: 0
+    weight: 2
+    
+  # Available nodes for scheduling
+  - name: "NodesReady"
+    query_tpl: 'kube_node_status_condition{condition="Ready",status="true"}'
+    operator: "<"
+    threshold: 1
+    weight: 3

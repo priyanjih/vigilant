@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	openai "github.com/sashabaranov/go-openai"
 	"vigilant/pkg/logs"
@@ -37,15 +38,18 @@ type RootCauseSummary struct {
 func Summarize(input SummaryInput) (RootCauseSummary, error) {
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
-		return RootCauseSummary{}, fmt.Errorf("OPENAI_API_KEY not set")
+		fmt.Println("[LLM FAILSAFE] OpenAI API key not set. Returning fallback summary.")
+		return createFallbackSummary("API key not configured"), nil
 	}
 
 	client := openai.NewClient(apiKey)
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
 	systemPrompt := buildSystemPrompt()
 	contextPrompt := buildContextPrompt(input)
 
+	fmt.Println("[LLM] Starting OpenAI API call...")
 	resp, err := client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
 		Model:       "gpt-4o",  // Use latest model
 		Temperature: 0.1,       // Low temperature for consistent technical analysis
@@ -62,7 +66,8 @@ func Summarize(input SummaryInput) (RootCauseSummary, error) {
 		},
 	})
 	if err != nil {
-		return RootCauseSummary{}, err
+		fmt.Printf("[LLM FAILSAFE] OpenAI API call failed: %v. Returning fallback summary.\n", err)
+		return createFallbackSummary("API call failed"), nil
 	}
 
 	raw := resp.Choices[0].Message.Content
@@ -290,4 +295,24 @@ func SummarizeMany(correlations []AlertCorrelation) (map[string]RootCauseSummary
 	}
 
 	return results, nil
+}
+
+func createFallbackSummary(reason string) RootCauseSummary {
+	return RootCauseSummary{
+		Risk:       "Medium",
+		Confidence: 0.3,
+		RootCause:  fmt.Sprintf("Unable to perform AI analysis (%s). Manual investigation required.", reason),
+		ImmediateActions: []string{
+			"Check alert details manually",
+			"Review metrics and logs",
+			"Escalate to on-call engineer if critical",
+		},
+		Investigation: []string{
+			"Examine Prometheus metrics for anomalies",
+			"Search application logs for error patterns",
+			"Check system resource utilization",
+		},
+		Prevention: "Set up proper monitoring and alerts",
+		Summary:    fmt.Sprintf("Alert requires manual analysis - %s", reason),
+	}
 }

@@ -1,0 +1,104 @@
+# Configuration for KubeProxyDown alert
+log_file: /var/log/kubernetes/kube-proxy.log
+
+# Elasticsearch configuration for kube-proxy logs
+elasticsearch:
+  index_pattern: "kubernetes-*,logs-*,logstash-*"
+  time_range_minutes: 30
+  scan_limit: 800
+  service_fields: ["kubernetes.container.name", "container.name", "component"]
+  namespace_filter: "kube-system"
+
+log_patterns:
+  # Kube-proxy specific errors
+  - label: "proxy_startup_failed"
+    regex: "(?i)(failed.*start|startup.*error|initialization.*failed)"
+  - label: "iptables_error"
+    regex: "(?i)(iptables.*error|iptables.*failed|netfilter.*error)"
+  - label: "service_sync_error"
+    regex: "(?i)(service.*sync.*error|endpoint.*sync.*failed)"
+  - label: "network_policy_error"
+    regex: "(?i)(network.*policy.*error|policy.*sync.*failed)"
+  - label: "conntrack_error"
+    regex: "(?i)(conntrack.*error|connection.*tracking.*failed)"
+  - label: "port_allocation_error"
+    regex: "(?i)(port.*allocation.*failed|nodeport.*error|cannot.*bind)"
+  - label: "dns_resolution_error"
+    regex: "(?i)(dns.*resolution.*failed|name.*resolution.*error)"
+  - label: "cluster_cidr_error"
+    regex: "(?i)(cluster.*cidr.*error|ip.*range.*invalid)"
+  - label: "api_server_connection_error"
+    regex: "(?i)(api.*server.*unreachable|connection.*refused.*api|unable.*connect.*api)"
+  - label: "process_crash"
+    regex: "(?i)(panic|segmentation.*fault|fatal.*error|process.*died)"
+
+metrics:
+  # Kube-proxy process up status (should be 1)
+  - name: "KubeProxyUp"
+    query_tpl: 'up{job="kube-proxy"}'
+    operator: "<"
+    threshold: 1
+    weight: 10
+  
+  # Node readiness (nodes should be ready when proxy is working)
+  - name: "NodesReady"
+    query_tpl: 'kube_node_status_condition{condition="Ready",status="true"}'
+    operator: "<"
+    threshold: 1
+    weight: 3
+    
+  # Service endpoint availability
+  - name: "ServiceEndpoints"
+    query_tpl: 'kube_endpoint_info'
+    operator: "<"
+    threshold: 1
+    weight: 2
+    
+  # Network connectivity indicators
+  - name: "NetworkPolicyCount"
+    query_tpl: 'kube_networkpolicy_info'
+    operator: ">"
+    threshold: 0
+    weight: 1
+    
+  # Pod network connectivity
+  - name: "PodNetworkUnavailable"
+    query_tpl: 'kube_node_status_condition{condition="NetworkUnavailable",status="true"}'
+    operator: ">"
+    threshold: 0
+    weight: 4
+    
+  # System pods in kube-system namespace
+  - name: "KubeSystemPodsReady"
+    query_tpl: 'kube_pod_status_ready{condition="true",namespace="kube-system"}'
+    operator: "<"
+    threshold: 5
+    weight: 2
+    
+  # DNS pods specifically (kube-proxy affects DNS)
+  - name: "CoreDNSPodsReady"
+    query_tpl: 'kube_pod_status_ready{condition="true",namespace="kube-system"} and on(pod) kube_pod_info{pod=~"coredns.*"}'
+    operator: "<"
+    threshold: 1
+    weight: 3
+    
+  # Node resource pressure
+  - name: "NodeMemoryPressure"
+    query_tpl: 'kube_node_status_condition{condition="MemoryPressure",status="true"}'
+    operator: ">"
+    threshold: 0
+    weight: 2
+    
+  # Control plane components health
+  - name: "APIServerUp"
+    query_tpl: 'up{job="apiserver"}'  
+    operator: "<"
+    threshold: 1
+    weight: 3
+    
+  # Kubernetes service discovery
+  - name: "ServiceCount"
+    query_tpl: 'kube_service_info'
+    operator: "<"
+    threshold: 1
+    weight: 1
